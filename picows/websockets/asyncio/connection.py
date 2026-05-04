@@ -667,8 +667,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             self._recv_waiter = None
 
     def recv_streaming(self, decode: Optional[bool] = None) -> AsyncIterator[Data]:
-        self._set_recv_in_progress()
-
         msg_started: cython.bint = False
         msg_finished: cython.bint = False
         frame: _BufferedFrame
@@ -678,6 +676,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             nonlocal msg_started, msg_finished
 
             try:
+                self._set_recv_in_progress()
                 if not self._recv_queue:
                     await self._wait_recv_queue_not_empty()
                 frame = self._check_frame(self._recv_queue.popleft())
@@ -791,7 +790,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
                 else:
                     current = next(iterator)
             except stop_exception_type:
-                raise TypeError("message iterable cannot be empty") from None
+                return
 
             first_is_str: cython.bint
             if isinstance(current, str):
@@ -849,7 +848,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     async def wait_closed(self) -> None:
         await self.transport.wait_disconnected()
 
-    async def ping(self, data: Optional[Union[str, bytes]] = None) -> Awaitable[float]:
+    async def ping(self, data: Optional[DataLike] = None) -> Awaitable[float]:
         if self._state is State.CLOSED:
             raise self._connection_closed()
         if data is None:
@@ -859,10 +858,10 @@ class ClientConnection(WSListener):  # type: ignore[misc]
                     break
         elif isinstance(data, str):
             payload = data.encode("utf-8")
-        elif isinstance(data, bytes):
-            payload = data
+        elif isinstance(data, (bytes, bytearray, memoryview)):
+            payload = bytes(data)
         else:
-            raise TypeError("ping payload must be str, bytes, or None")
+            raise TypeError("ping payload must be str, bytes-like, or None")
 
         if payload in self._pending_pings:
             raise ConcurrencyError("another ping was sent with the same data")
