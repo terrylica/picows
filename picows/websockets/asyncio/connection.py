@@ -707,8 +707,9 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             message = self._permessage_deflate.encode_frame(
                 msg_type, self._compression_payload(message), fin
             )
-
-        self.transport.send(msg_type, message, fin, msg_type != WSMsgType.CONTINUATION)
+            self.transport.send(msg_type, message, fin, msg_type != WSMsgType.CONTINUATION)
+        else:
+            self.transport.send(msg_type, message, fin)
 
     async def send(
         self,
