@@ -4,17 +4,16 @@ import picows
 import pytest
 
 from picows import websockets
-from tests.utils import WSServer
+from tests.utils import ServerEchoListener, WSServer
 
 
-class FragmentedTextListener(picows.WSListener):
+class FragmentedTextListener(ServerEchoListener):
     def __init__(self, allow_first_fragment: asyncio.Event, allow_second_fragment: asyncio.Event):
         self._allow_first_fragment = allow_first_fragment
         self._allow_second_fragment = allow_second_fragment
-        self.transport = None
 
     def on_ws_connected(self, transport: picows.WSTransport):
-        self.transport = transport
+        super().on_ws_connected(transport)
 
         async def send_fragments():
             await self._allow_first_fragment.wait()

@@ -1,22 +1,24 @@
 import picows
 
 from picows import websockets
-from tests.utils import WSServer
+from tests.utils import ServerEchoListener, WSServer
 
 
-class SendTextOnConnect(picows.WSListener):
+class SendTextOnConnect(ServerEchoListener):
     def __init__(self, payload: bytes):
         self._payload = payload
 
     def on_ws_connected(self, transport: picows.WSTransport):
+        super().on_ws_connected(transport)
         transport.send(picows.WSMsgType.TEXT, self._payload)
 
 
-class SendBinaryOnConnect(picows.WSListener):
+class SendBinaryOnConnect(ServerEchoListener):
     def __init__(self, payload: bytes):
         self._payload = payload
 
     def on_ws_connected(self, transport: picows.WSTransport):
+        super().on_ws_connected(transport)
         transport.send(picows.WSMsgType.BINARY, self._payload)
 
 
