@@ -151,6 +151,21 @@ async def test_ws_on_connected_raise_server_side(use_aiofastnet, ssl_context):
     async with WSServer(lambda _: ServerClientListener(), use_aiofastnet=use_aiofastnet, ssl=ssl_context.server) as server:
         async with WSClient(server, use_aiofastnet=use_aiofastnet, ssl_context=ssl_context.client) as client:
             async with async_timeout.timeout(TIMEOUT):
+                msg = await client.get_message()
+                assert msg.close_code == WSCloseCode.INTERNAL_ERROR
+                assert msg.close_reason is None
+                await client.transport.wait_disconnected()
+
+    class ServerClientListenerCodeOverride(picows.WSListener):
+        def on_ws_connected(self, transport: picows.WSTransport):
+            raise picows.WSProtocolError(WSCloseCode.POLICY_VIOLATION, "override close code and reason")
+
+    async with WSServer(lambda _: ServerClientListenerCodeOverride(), use_aiofastnet=use_aiofastnet, ssl=ssl_context.server) as server:
+        async with WSClient(server, use_aiofastnet=use_aiofastnet, ssl_context=ssl_context.client) as client:
+            async with async_timeout.timeout(TIMEOUT):
+                msg = await client.get_message()
+                assert msg.close_code == WSCloseCode.POLICY_VIOLATION
+                assert msg.close_reason == "override close code and reason"
                 await client.transport.wait_disconnected()
 
 
@@ -201,6 +216,22 @@ async def test_ws_on_frame_raise_server_side(use_aiofastnet, ssl_context, discon
                 with pytest.raises(asyncio.TimeoutError):
                     async with async_timeout.timeout(TIMEOUT):
                         await client.transport.wait_disconnected()
+
+    class ServerClientListenerCodeOverride(picows.WSListener):
+        def on_ws_connected(self, transport: picows.WSTransport):
+            raise picows.WSProtocolError(WSCloseCode.POLICY_VIOLATION, "override close code and reason")
+
+    async with WSServer(lambda _: ServerClientListenerCodeOverride(),
+                        use_aiofastnet=use_aiofastnet, ssl=ssl_context.server,
+                        disconnect_on_exception=disconnect_on_exception) as server:
+        async with WSClient(server,
+                            use_aiofastnet=use_aiofastnet, ssl_context=ssl_context.client) as client:
+            client.transport.send(picows.WSMsgType.BINARY, b"halo")
+            async with async_timeout.timeout(TIMEOUT):
+                msg = await client.get_message()
+                assert msg.close_code == WSCloseCode.POLICY_VIOLATION
+                assert msg.close_reason == "override close code and reason"
+                await client.transport.wait_disconnected()
 
 
 async def test_ws_on_disconnected_raise_client_side(use_aiofastnet, ssl_context):

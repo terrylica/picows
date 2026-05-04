@@ -1301,7 +1301,7 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
                         "Initiating disconnect because no PONG was received within %s seconds",
                         self._auto_ping_reply_timeout)
 
-                    self.transport.send_close(WSCloseCode.GOING_AWAY, f"peer has not replied to ping/heartbeat request within {self._auto_ping_reply_timeout} second(s)".encode())
+                    self.transport.send_close(WSCloseCode.GOING_AWAY, f"peer has not replied to ping/heartbeat request within {self._auto_ping_reply_timeout} second(s)")
                     # Give a chance for the transport to send close message
                     # But don't wait for any tcp confirmation, use abort()
                     # because normal disconnect may hang until OS TCP/IP timeout
@@ -1313,7 +1313,7 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
                 self._logger.log(_DEBUG_LL, "Auto-ping loop cancelled")
         except:
             self._logger.exception("Auto-ping loop failed, disconnect websocket")
-            self.transport.send_close(WSCloseCode.INTERNAL_ERROR, b"an exception occurred in auto-ping loop")
+            self.transport.send_close(WSCloseCode.INTERNAL_ERROR, "an exception occurred in auto-ping loop")
             self._loop.call_later(_DISCONNECT_AFTER_ERROR_DELAY, self.transport.disconnect)
 
     cdef inline tuple _try_read_upgrade_request(self):
@@ -1541,7 +1541,7 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
         except WSProtocolError as ex:
             self._logger.error("WS parser error: %s, initiate disconnect", ex.args)
             self._disconnect_exception = ex
-            self.transport.send_close(ex.args[0], ex.args[1].encode())
+            self.transport.send_close(ex.args[0], ex.args[1])
             self._loop.call_later(_DISCONNECT_AFTER_ERROR_DELAY, self.transport.disconnect)
         except BaseException as ex:
             self._logger.exception("WS parser failure, initiate disconnect")
@@ -1710,15 +1710,25 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
         assert False, "we should never reach this state"
 
     cdef inline _invoke_on_ws_connected(self):
+        cdef:
+            WSCloseCode code
+            str reason
+
         try:
             self.listener.on_ws_connected(self.transport)
         except Exception as exc:
+            if isinstance(exc, WSProtocolError):
+                code = exc.code
+                reason = exc.args[1]
+            else:
+                code = WSCloseCode.INTERNAL_ERROR
+                reason = ""
             if self.is_client_side:
                 self._logger.warning("Initiate disconnect because of exception from WSListener.on_ws_connected: %s", str(exc))
                 self._disconnect_exception = exc
             else:
                 self._logger.error("Initiate disconnect because of exception from WSListener.on_ws_connected: %s", str(exc))
-            self.transport.send_close(WSCloseCode.INTERNAL_ERROR)
+            self.transport.send_close(code, reason)
             self._loop.call_later(_DISCONNECT_AFTER_ERROR_DELAY, self.transport.disconnect)
 
     cdef inline _invoke_on_ws_frame(self, WSFrame frame):
@@ -1745,6 +1755,11 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
                     return
 
             self.listener.on_ws_frame(self.transport, frame)
+        except WSProtocolError as exc:
+            self._logger.error("on_ws_frame raised WSProtocolError: %s, send CLOSE and initiate disconnect", exc.args)
+            self._disconnect_exception = exc
+            self.transport.send_close(exc.code, exc.args[1])
+            self._loop.call_later(_DISCONNECT_AFTER_ERROR_DELAY, self.transport.disconnect)
         except Exception as exc:
             if self._disconnect_on_exception:
                 if self.is_client_side:
