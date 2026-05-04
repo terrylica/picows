@@ -34,9 +34,6 @@ from ..exceptions import (
 from ..typing import BytesLike, Data, DataLike, LoggerLike, Subprotocol
 
 
-OK_CLOSE_CODES = {0, 1000, 1001}
-
-
 class State(IntEnum):
     CONNECTING = 0
     OPEN = 1
@@ -61,6 +58,10 @@ def _make_buffered_frame(msg_type: WSMsgType, payload: bytes, fin: cython.bint) 
     self.payload = payload
     self.fin = fin
     return self
+
+
+# cached for performance
+_ok_close_codes = cython.declare(set, {0, 1000, 1001})
 
 
 # zlib/compress/decompress utils, cached for performance
@@ -562,8 +563,8 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         rcvd_code = _coerce_close_code(rcvd.code) if rcvd is not None else None
         sent_code = _coerce_close_code(sent.code) if sent is not None else None
         ok = (
-            (rcvd_code in OK_CLOSE_CODES or rcvd_code is None)
-            and (sent_code in OK_CLOSE_CODES or sent_code is None)
+            (rcvd_code in _ok_close_codes or rcvd_code is None)
+            and (sent_code in _ok_close_codes or sent_code is None)
         )
         exc_type = ConnectionClosedOK if ok else ConnectionClosedError
         self._close_exc = exc_type(rcvd, sent, rcvd_then_sent)
