@@ -181,14 +181,14 @@ class _PerMessageDeflate:
             if self.remote_no_context_takeover or self._decoder is None:
                 self._decoder = _zlib_decompressobj(wbits=self.remote_max_window_bits)
 
-        assert self._decoder is not None
         try:
             data = self._decoder.decompress(frame.get_payload_as_memoryview(), max_length)
-            max_length -= len(data)
+            if max_length > 0:
+                max_length -= len(data)
 
-            if self._decoder.unconsumed_tail:
-                raise WSProtocolError(WSCloseCode.MESSAGE_TOO_BIG,
-                                      "message too big")
+                if self._decoder.unconsumed_tail:
+                    raise WSProtocolError(WSCloseCode.MESSAGE_TOO_BIG,
+                                          "message too big")
 
             if frame.fin:
                 data2 = self._decoder.decompress(_empty_uncompressed_block, max_length)
