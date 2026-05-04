@@ -716,10 +716,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         message: Union[DataLike, Iterable[DataLike], AsyncIterator[DataLike]],
         text: Optional[bool] = None,
     ) -> None:
-        # Catch a common mistake -- passing a dict to send().
-        if isinstance(message, Mapping):
-            raise TypeError("data is a dict-like object")
-
         if self._state is State.CLOSED:
             raise self._connection_closed()
 
@@ -739,6 +735,9 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
                 if self._write_ready is not None:
                     await self._write_ready
+            # Catch a common mistake -- passing a dict to send().
+            elif isinstance(message, Mapping):
+                raise TypeError("data is a dict-like object")
             elif isinstance(message, (AsyncIterable, Iterable)):
                 await self._send_fragments(message, text)  # type: ignore[arg-type]
             else:
