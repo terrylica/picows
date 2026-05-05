@@ -31,6 +31,13 @@ examples - Various examples for users on how to use picows + perf_test that coul
 - In Cythonized Python modules, avoid `typing.cast(...)` in hot paths.
   Cython may compile `cast(...)` into a real runtime global lookup and function call instead of erasing it like a type checker would.
   Prefer control-flow narrowing, assertions, or narrowly scoped type-ignore comments when needed.
+- If `picows` core exposes an inconsistent runtime shape or behavior that looks like a bug, do not silently normalize around it in wrapper code.
+  Stop and ask first, or at least clearly call out that it appears to be a core bug instead of assuming it is an intentional quirk.
+  Wrapper-level workarounds for such inconsistencies should be treated as temporary and explicit, not as the default resolution.
+  Legitimate intentional quirks can be documented in this file separately once confirmed.
+- `WSUpgradeRequest` / `WSUpgradeResponse` expose a mixed bytes/str API and this is public API.
+  Request `method`, `path`, `version` and response `version` are low-level protocol bytes, while headers are decoded strings and response `status` is `HTTPStatus`.
+  Do not change this shape casually in core or silently normalize it away in wrappers; treat it as a stable compatibility constraint unless an intentional breaking change is agreed.
 
 ## Testing instructions
 - Run lint after updating code with:
