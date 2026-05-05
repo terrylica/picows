@@ -207,20 +207,23 @@ class _PerMessageDeflate:
     @cython.cfunc
     @cython.inline
     @cython.wraparound(True)
-    def encode_frame(self, msg_type: WSMsgType, payload: BytesLike, fin: cython.bint) -> BytesLike:
+    def encode_frame(self, msg_type: WSMsgType, data: DataLike, fin: cython.bint) -> BytesLike:
         if msg_type != WSMsgType.CONTINUATION and (self.local_no_context_takeover or self._encoder is None):
             self._encoder = _zlib_compressobj(wbits=self.local_max_window_bits)
 
-        data: BytesLike = (self._encoder.compress(payload) +
-                           self._encoder.flush(_zlib_z_sync_flush))
+        if isinstance(data, str):
+            data = cython.cast(str, data).encode('utf-8')
+
+        compressed_data: BytesLike = (self._encoder.compress(data) +
+                                      self._encoder.flush(_zlib_z_sync_flush))
         if fin:
-            data_mv = memoryview(data)
-            assert data_mv[-4:] == _empty_uncompressed_block
-            data = data_mv[:-4]
+            mv = memoryview(compressed_data)
+            assert mv[-4:] == _empty_uncompressed_block
+            compressed_data = mv[:-4]
             if self.local_no_context_takeover:
                 self._encoder = None
 
-        return data
+        return compressed_data
 
 
 @cython.cfunc
@@ -301,7 +304,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     _subprotocol: Optional[Subprotocol]
     _compression: Optional[str]
     _permessage_deflate: Optional[_PerMessageDeflate]
-    _close_exc: Optional[ConnectionClosed]
     _loop: asyncio.AbstractEventLoop
 
     # Send side
@@ -321,6 +323,10 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     _max_queue_low: cython.Py_ssize_t
     _incoming_message_active: cython.bint
     _incoming_message_size: cython.Py_ssize_t
+
+    # Close logic
+    _close_fut: asyncio.Future[None]
+    _close_exc: Optional[ConnectionClosed]
 
     _pending_pings: Dict[bytes, Tuple[asyncio.Future[float], float]]
     _ping_interval: Optional[float]
@@ -352,7 +358,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         self._subprotocol = None
         self._compression = compression
         self._permessage_deflate = None
-        self._close_exc: Optional[ConnectionClosed] = None
         self._loop = asyncio.get_running_loop()
 
         self._send_in_progress = False
@@ -369,6 +374,9 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         self._max_queue_high, self._max_queue_low = _normalize_watermarks(max_queue)
         self._incoming_message_active = False
         self._incoming_message_size = 0
+
+        self._close_fut = self._loop.create_future()
+        self._close_exc: Optional[ConnectionClosed] = None
 
         self._pending_pings: dict[bytes, tuple[asyncio.Future[float], float]] = {}
         self._ping_interval = ping_interval
@@ -396,21 +404,34 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.ccall
     def on_ws_disconnected(self, transport: WSTransport) -> None:
+        # Set _close_exc, _close_fut
         self._set_close_exception()
+
+        # Wake up potential waiter on _recv_queue
         self._add_to_recv_queue(None)
+
+        # Cancel pinging loop
         if self._keepalive_task is not None:
             self._keepalive_task.cancel()
             self._keepalive_task = None
+
+        # If there is a waiter waiting for resume_writing wake it up with exception
         if self._write_ready is not None:
             if not self._write_ready.done():
-                self._write_ready.set_exception(
-                    self._close_exc or ConnectionClosedError(None, None, None)
-                )
+                self._write_ready.set_exception(self._close_exc) # type: ignore[arg-type]
             self._write_ready = None
+
+        # Wake up all waiters waiting for ping replies
         for waiter, _ in self._pending_pings.values():
             if not waiter.done():
-                waiter.set_exception(self._close_exc or ConnectionClosedError(None, None, None))
+                waiter.set_exception(self._close_exc) # type: ignore[arg-type]
         self._pending_pings.clear()
+
+        # Wake up all waiters waiting for current send to complete
+        for waiter in self._send_waiters:
+            if not waiter.done():
+                waiter.set_exception(self._close_exc)
+        self._send_waiters.clear()
 
     @cython.ccall
     def on_ws_frame(self, transport: WSTransport, frame: WSFrame) -> None:
@@ -548,6 +569,8 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     @cython.cfunc
     @cython.inline
     def _set_close_exception(self) -> None:
+        self._close_fut.set_result(None)
+
         handshake = self.transport.close_handshake
         if handshake is None:
             self._close_exc = ConnectionClosedError(None, None, None)
@@ -566,44 +589,12 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.cfunc
     @cython.inline
-    def _connection_closed(self) -> ConnectionClosed:
-        if self._close_exc is None:
-            self._set_close_exception()
-        return self._close_exc or ConnectionClosedError(None, None, None)
-
-    @cython.cfunc
-    @cython.inline
     def _set_recv_in_progress(self) -> None:
         if self._recv_in_progress:
             raise ConcurrencyError("cannot call recv() or recv_streaming() concurrently")
         if self._recv_streaming_broken:
             raise ConcurrencyError("recv_streaming() wasn't fully consumed")
         self._recv_in_progress = True
-
-    async def _wait_send_turn(self) -> None:
-        waiter: asyncio.Future[None] = self._loop.create_future()
-        self._send_waiters.append(waiter)
-        try:
-            await waiter
-        except Exception:
-            try:
-                self._send_waiters.remove(waiter)
-            except ValueError:
-                pass
-            raise
-
-    @cython.cfunc
-    @cython.inline
-    def _release_send(self) -> None:
-        waiter: asyncio.Future[None]
-
-        while self._send_waiters:
-            waiter = self._send_waiters.popleft()
-            if not waiter.done():
-                waiter.set_result(None)
-                return
-
-        self._send_in_progress = False
 
     @cython.cfunc
     @cython.inline
@@ -618,16 +609,17 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     def _check_frame(self, frame: Optional[_BufferedFrame]) -> _BufferedFrame:
         self._resume_reading_if_needed()
         if frame is None:
-            raise self._connection_closed()
+            raise self._close_exc
         return frame
 
-    async def _fail_invalid_data(self, exc: UnicodeDecodeError) -> None:
+    @cython.cfunc
+    @cython.inline
+    def _fail_invalid_data(self, exc: UnicodeDecodeError) -> None:
         self.transport.send_close(
             WSCloseCode.INVALID_TEXT,
             f"{exc.reason} at position {exc.start}",
         )
         self.transport.disconnect(False)
-        await self.wait_closed()
 
     async def recv(self, decode: Optional[bool] = None) -> Data:
         frame: _BufferedFrame
@@ -660,8 +652,8 @@ class ClientConnection(WSListener):  # type: ignore[misc]
                 self._recv_queue.extendleft(reversed(frames))
                 raise
         except UnicodeDecodeError as exc:
-            await self._fail_invalid_data(exc)
-            raise self._connection_closed() from exc
+            self._fail_invalid_data(exc)
+            await self._wait_close_and_raise(exc)
         finally:
             self._recv_in_progress = False
             self._recv_waiter = None
@@ -693,8 +685,8 @@ class ClientConnection(WSListener):  # type: ignore[misc]
                     yield self._decode_data(frame.payload, msg_type, decode)
                 msg_finished = True
             except UnicodeDecodeError as exc:
-                await self._fail_invalid_data(exc)
-                raise self._connection_closed() from exc
+                self._fail_invalid_data(exc)
+                await self._wait_close_and_raise(exc)
             finally:
                 self._recv_in_progress = False
                 self._recv_waiter = None
@@ -716,25 +708,90 @@ class ClientConnection(WSListener):  # type: ignore[misc]
                 and not self.transport.is_disconnected
                 and not self.transport.is_close_frame_sent)
 
+    @cython.cfunc
+    @cython.inline
     def _encode_and_send(self, msg_type: WSMsgType, message: DataLike, fin: cython.bint) -> None:
-        if not self._is_in_open_state():
-            raise self._connection_closed()
-
         if self._permessage_deflate is not None:
-            message = self._permessage_deflate.encode_frame(
-                msg_type, self._compression_payload(message), fin
-            )
+            message = self._permessage_deflate.encode_frame(msg_type, message, fin)
             self.transport.send(msg_type, message, fin, msg_type != WSMsgType.CONTINUATION)
         else:
             self.transport.send(msg_type, message, fin)
+
+    async def _wait_close_and_raise(self, exc=None) -> None:
+        # CANCELLATION:
+        # _close_fut is supposed to be set only from on_ws_disconnected.
+        # It is intentionally shielded.
+        await asyncio.shield(self._close_fut)
+        if exc is None:
+            raise self._close_exc
+        else:
+            raise self._close_exc from exc
+
+    async def _wait_send_turn(self) -> None:
+        # DISCONNECT: the waiter will raise ConnectionClosed
+        # It can also successfully finish, but we may be in CLOSING state.
+        # In such case delegate waiting to _wait_close_and_raise
+
+        # CANCELLATION:
+        # waiter future is not shielded intentionally, it turns into Cancelled
+        # state and removed from waiters by _release_send.
+        # _wait_close_and_raise shields _close_fut.
+        waiter: asyncio.Future[None] = self._loop.create_future()
+        self._send_waiters.append(waiter)
+        await waiter
+        if not self._is_in_open_state():
+            await self._wait_close_and_raise()
+
+    async def _wait_write_ready(self) -> None:
+        # DISCONNECT: the waiter will raise ConnectionClosed
+        # It can also successfully finish, but we may be in CLOSING state.
+        # In such case delegate waiting to _wait_close_and_raise
+
+        # CANCELLATION:
+        # _write_ready future is shielded intentionally. It is only supposed to
+        # be set from resume_writing and on_ws_disconnected.
+        assert self._write_ready is not None
+        await asyncio.shield(self._write_ready)
+        if not self._is_in_open_state():
+            await self._wait_close_and_raise()
+
+    async def _get_next_async_fragment(self, async_iterator: AsyncIterator[DataLike]) -> DataLike:
+        # DISCONNECT: raise ConnectionClosed if after user async interator
+        # returns we are not in OPEN state
+
+        # CANCELLATION:
+        # User async iterator is also getting canceled.
+
+        data: DataLike = await anext(async_iterator)
+        if not self._is_in_open_state():
+            await self._wait_close_and_raise()
+        return data
+
+    @cython.cfunc
+    @cython.inline
+    def _release_send(self) -> None:
+        waiter: asyncio.Future[None]
+
+        while self._send_waiters:
+            waiter = self._send_waiters.popleft()
+            # Some waiters may be canceled, that is why we have defensive check
+            # for waiter.done()
+            if not waiter.done():
+                waiter.set_result(None)
+                return
+
+        self._send_in_progress = False
 
     async def send(
         self,
         message: Union[DataLike, Iterable[DataLike], AsyncIterator[DataLike]],
         text: Optional[bool] = None,
     ) -> None:
+        # send doesn't directly wait on helper futures. It is very tricky to handle
+        # disconnects and cancellations properly. send delegates this to
+        # _wait_* helpers.
         if not self._is_in_open_state():
-            raise self._connection_closed()
+            await self._wait_close_and_raise()
 
         if self._send_in_progress:
             await self._wait_send_turn()
@@ -751,7 +808,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
                 self._encode_and_send(msg_type, message, True)
 
                 if self._write_ready is not None:
-                    await self._write_ready
+                    await self._wait_write_ready()
             # Catch a common mistake -- passing a dict to send().
             elif isinstance(message, Mapping):
                 raise TypeError("data is a dict-like object")
@@ -771,13 +828,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             return
 
         raise TypeError("all fragments must be of the same category: str vs bytes-like")
-
-    @cython.cfunc
-    @cython.inline
-    def _compression_payload(self, message: DataLike) -> BytesLike:
-        if isinstance(message, str):
-            return message.encode("utf-8")
-        return message
 
     async def _send_fragments(
         self,
@@ -803,7 +853,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         try:
             try:
                 if is_async:
-                    current = await anext(async_iterator)
+                    current = await self._get_next_async_fragment(async_iterator)
                 else:
                     current = next(iterator)
             except stop_exception_type:
@@ -829,7 +879,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
                 try:
                     if is_async:
-                        current = await anext(async_iterator)
+                        current = await self._get_next_async_fragment(async_iterator)
                     else:
                         current = next(iterator)
                 except stop_exception_type:
@@ -837,12 +887,12 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
                 self._check_fragment_type(current, first_is_str)
                 if self._write_ready is not None:
-                    await self._write_ready
+                    await self._wait_write_ready()
 
             # Send the last empty frame with fin=True
             self._encode_and_send(msg_type, b"", True)
             if self._write_ready is not None:
-                await self._write_ready
+                await self._wait_write_ready()
         except BaseException:
             self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, "error in fragmented message")
             self.transport.disconnect(False)
@@ -872,7 +922,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     async def ping(self, data: Optional[DataLike] = None) -> Awaitable[float]:
         if not self._is_in_open_state():
-            raise self._connection_closed()
+            await self._wait_close_and_raise()
 
         if data is None:
             while True:
@@ -896,11 +946,11 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     async def pong(self, data: Union[str, bytes] = b"") -> None:
         if not self._is_in_open_state():
-            raise self._connection_closed()
+            await self._wait_close_and_raise()
 
         self.transport.send_pong(data)
 
-    async def _keepalive_loop(self) -> None: 
+    async def _keepalive_loop(self) -> None:
         try:
             while True:
                 assert self._ping_interval is not None
