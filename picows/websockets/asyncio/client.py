@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import socket
 from collections.abc import Generator
+from logging import getLogger
 from ssl import SSLContext
 from typing import Any, Callable, Optional, Sequence, Union
 
@@ -211,7 +212,7 @@ class _Connect:
                 extra_headers=extra_headers,
                 proxy=proxy,
                 socket_factory=socket_factory,
-                logger_name=self.logger if self.logger is not None else "websockets.client",
+                logger_name=self.logger if self.logger is not None else getLogger("websockets.client"),
                 **conn_kwargs,
             )
         except picows.WSInvalidURL as exc:

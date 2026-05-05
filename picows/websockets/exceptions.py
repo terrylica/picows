@@ -108,7 +108,7 @@ class InvalidProxyStatus(ProxyError):
         self.response = response
 
     def __str__(self) -> str:
-        status = getattr(self.response, "status", None)
+        status = getattr(self.response, "status_code", None)
         if status is None:
             return "proxy rejected connection"
         return f"proxy rejected connection: HTTP {int(status):d}"

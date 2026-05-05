@@ -283,7 +283,7 @@ def process_exception(exc: Exception) -> Optional[Exception]:
     if isinstance(exc, (EOFError, OSError, asyncio.TimeoutError)):
         return None
     if isinstance(exc, InvalidStatus):
-        status = exc.response.status
+        status = exc.response.status_code
         if int(status) in {500, 502, 503, 504}:
             return None
     return exc
@@ -301,7 +301,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     _subprotocol: Optional[Subprotocol]
     _compression: Optional[str]
     _permessage_deflate: Optional[_PerMessageDeflate]
-    _state: State
     _close_exc: Optional[ConnectionClosed]
     _loop: asyncio.AbstractEventLoop
 
@@ -353,7 +352,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         self._subprotocol = None
         self._compression = compression
         self._permessage_deflate = None
-        self._state = State.CONNECTING
         self._close_exc: Optional[ConnectionClosed] = None
         self._loop = asyncio.get_running_loop()
 
@@ -382,8 +380,8 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
         self.transport = transport
-        self._request = transport.request
-        self._response = transport.response
+        self._request = Request.from_picows(transport.request)
+        self._response = Response.from_picows(transport.response)
         try:
             self._subprotocol = _resolve_subprotocol(self._subprotocols, self._response)
             self._configure_extensions()
@@ -392,14 +390,12 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, str(exc))
             self.transport.disconnect(False)
             return
-        self._state = State.OPEN
         self._set_write_limits(self._write_limit)
         if self._ping_interval is not None and self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
 
     @cython.ccall
     def on_ws_disconnected(self, transport: WSTransport) -> None:
-        self._state = State.CLOSED
         self._set_close_exception()
         self._add_to_recv_queue(None)
         if self._keepalive_task is not None:
@@ -415,25 +411,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             if not waiter.done():
                 waiter.set_exception(self._close_exc or ConnectionClosedError(None, None, None))
         self._pending_pings.clear()
-
-    @cython.cfunc
-    @cython.inline
-    def _process_pong_frame(self, frame: WSFrame) -> None:
-        ping = self._pending_pings.pop(frame.get_payload_as_bytes(), None)
-        if ping is not None:
-            waiter, sent_at = ping
-            self._latency = monotonic() - sent_at
-            if not waiter.done():
-                waiter.set_result(self._latency)
-
-    @cython.cfunc
-    @cython.inline
-    def _process_close_frame(self, frame: WSFrame) -> None:
-        close_code = frame.get_close_code()
-        close_message = frame.get_close_message()
-        self.transport.send_close(close_code, close_message)
-        self.transport.disconnect()
-        self._state = State.CLOSING
 
     @cython.ccall
     def on_ws_frame(self, transport: WSTransport, frame: WSFrame) -> None:
@@ -493,6 +470,24 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             if not self._write_ready.done():
                 self._write_ready.set_result(None)
             self._write_ready = None
+
+    @cython.cfunc
+    @cython.inline
+    def _process_pong_frame(self, frame: WSFrame) -> None:
+        ping = self._pending_pings.pop(frame.get_payload_as_bytes(), None)
+        if ping is not None:
+            waiter, sent_at = ping
+            self._latency = monotonic() - sent_at
+            if not waiter.done():
+                waiter.set_result(self._latency)
+
+    @cython.cfunc
+    @cython.inline
+    def _process_close_frame(self, frame: WSFrame) -> None:
+        close_code = frame.get_close_code()
+        close_message = frame.get_close_message()
+        self.transport.send_close(close_code, close_message)
+        self.transport.disconnect()
 
     @cython.cfunc
     @cython.inline
@@ -578,12 +573,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.cfunc
     @cython.inline
-    def _fail_protocol_error(self, message: str) -> None:
-        self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, message)
-        self.transport.disconnect(False)
-
-    @cython.cfunc
-    @cython.inline
     def _set_recv_in_progress(self) -> None:
         if self._recv_in_progress:
             raise ConcurrencyError("cannot call recv() or recv_streaming() concurrently")
@@ -632,6 +621,14 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             raise self._connection_closed()
         return frame
 
+    async def _fail_invalid_data(self, exc: UnicodeDecodeError) -> None:
+        self.transport.send_close(
+            WSCloseCode.INVALID_TEXT,
+            f"{exc.reason} at position {exc.start}",
+        )
+        self.transport.disconnect(False)
+        await self.wait_closed()
+
     async def recv(self, decode: Optional[bool] = None) -> Data:
         frame: _BufferedFrame
 
@@ -662,6 +659,9 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             except asyncio.CancelledError:
                 self._recv_queue.extendleft(reversed(frames))
                 raise
+        except UnicodeDecodeError as exc:
+            await self._fail_invalid_data(exc)
+            raise self._connection_closed() from exc
         finally:
             self._recv_in_progress = False
             self._recv_waiter = None
@@ -692,6 +692,9 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
                     yield self._decode_data(frame.payload, msg_type, decode)
                 msg_finished = True
+            except UnicodeDecodeError as exc:
+                await self._fail_invalid_data(exc)
+                raise self._connection_closed() from exc
             finally:
                 self._recv_in_progress = False
                 self._recv_waiter = None
@@ -702,7 +705,21 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
         return iterator()
 
+    @cython.cfunc
+    @cython.inline
+    def _is_in_open_state(self) -> cython.bint:
+        # Before on_ws_connected, self.transport is None
+        # on_ws_frame immediately send CLOSE reply on incoming CLOSE frame, so receiving CLOSE == is_close_frame_sent
+        # transport.is_disconnect happens the last, asyncio Protocol got connection_lost event
+
+        return (self.transport is not None
+                and not self.transport.is_disconnected
+                and not self.transport.is_close_frame_sent)
+
     def _encode_and_send(self, msg_type: WSMsgType, message: DataLike, fin: cython.bint) -> None:
+        if not self._is_in_open_state():
+            raise self._connection_closed()
+
         if self._permessage_deflate is not None:
             message = self._permessage_deflate.encode_frame(
                 msg_type, self._compression_payload(message), fin
@@ -716,7 +733,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         message: Union[DataLike, Iterable[DataLike], AsyncIterator[DataLike]],
         text: Optional[bool] = None,
     ) -> None:
-        if self._state is State.CLOSED:
+        if not self._is_in_open_state():
             raise self._connection_closed()
 
         if self._send_in_progress:
@@ -826,16 +843,18 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             self._encode_and_send(msg_type, b"", True)
             if self._write_ready is not None:
                 await self._write_ready
-        except Exception:
-            self._fail_protocol_error("error in fragmented message")
+        except BaseException:
+            self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, "error in fragmented message")
+            self.transport.disconnect(False)
             raise
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
-        if self._state is State.CLOSED:
-            return
-        if self._state is State.OPEN:
-            self._state = State.CLOSING
-        self.transport.send_close(code, reason)
+        if self._send_in_progress:
+            self.transport.send_close(WSCloseCode.INTERNAL_ERROR, "close during fragmented message")
+            self.transport.disconnect(False)
+        else:
+            self.transport.send_close(cython.cast(WSCloseCode, code), reason)
+
         try:
             if self._close_timeout is None:
                 await self.wait_closed()
@@ -846,11 +865,15 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             await self.wait_closed()
 
     async def wait_closed(self) -> None:
-        await self.transport.wait_disconnected()
+        try:
+            await self.transport.wait_disconnected()
+        except Exception:
+            pass
 
     async def ping(self, data: Optional[DataLike] = None) -> Awaitable[float]:
-        if self._state is State.CLOSED:
+        if not self._is_in_open_state():
             raise self._connection_closed()
+
         if data is None:
             while True:
                 payload = os.urandom(4)
@@ -872,11 +895,12 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         return waiter
 
     async def pong(self, data: Union[str, bytes] = b"") -> None:
-        if self._state is State.CLOSED:
+        if not self._is_in_open_state():
             raise self._connection_closed()
+
         self.transport.send_pong(data)
 
-    async def _keepalive_loop(self) -> None:
+    async def _keepalive_loop(self) -> None: 
         try:
             while True:
                 assert self._ping_interval is not None
@@ -909,7 +933,14 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @property
     def state(self) -> State:
-        return self._state
+        if self.transport is None:
+            return State.CONNECTING
+        elif self.transport.is_disconnected:
+            return State.CLOSED
+        elif self.transport.is_close_frame_sent or self.transport.close_handshake is not None:
+            return State.CLOSING
+        else:
+            return State.OPEN
 
     @property
     def request(self) -> Request:
