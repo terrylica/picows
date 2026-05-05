@@ -10,7 +10,7 @@ from collections.abc import AsyncIterable, Generator, Iterable
 from enum import IntEnum
 from time import monotonic
 from typing import Any, AsyncIterator, Awaitable, Optional, Sequence, \
-    Union, Dict, Tuple, Iterator, Mapping
+    Union, Dict, Tuple, Iterator, Mapping, NoReturn
 
 import cython
 
@@ -317,7 +317,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     _recv_streaming_broken: cython.bint
     _paused_reading: cython.bint
     _recv_waiter: Optional[asyncio.Future[None]]
-    _recv_queue: deque[Optional[_BufferedFrame]]
+    _recv_queue: deque[_BufferedFrame]
     _max_message_size: cython.Py_ssize_t
     _max_queue_high: cython.Py_ssize_t
     _max_queue_low: cython.Py_ssize_t
@@ -407,8 +407,14 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         # Set _close_exc, _close_fut
         self._set_close_exception()
 
+        # Pacify type checker
+        assert self._close_exc is not None
+
         # Wake up potential waiter on _recv_queue
-        self._add_to_recv_queue(None)
+        if self._recv_waiter is not None:
+            if not self._recv_waiter.done():
+                self._recv_waiter.set_exception(self._close_exc)
+            self._recv_waiter = None
 
         # Cancel pinging loop
         if self._keepalive_task is not None:
@@ -418,7 +424,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         # If there is a waiter waiting for resume_writing wake it up with exception
         if self._write_ready is not None:
             if not self._write_ready.done():
-                self._write_ready.set_exception(self._close_exc) # type: ignore[arg-type]
+                self._write_ready.set_exception(self._close_exc)
             self._write_ready = None
 
         # Wake up all waiters waiting for ping replies
@@ -537,7 +543,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.cfunc
     @cython.inline
-    def _add_to_recv_queue(self, frame: Optional[_BufferedFrame]) -> None:
+    def _add_to_recv_queue(self, frame: _BufferedFrame) -> None:
         self._recv_queue.append(frame)
         waiter = self._recv_waiter
         if waiter is not None:
@@ -549,6 +555,9 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     @cython.inline
     def _wait_recv_queue_not_empty(self) -> asyncio.Future[None]:
         assert self._recv_waiter is None
+        if self._close_exc is not None:
+            raise self._close_exc
+
         waiter: asyncio.Future[None] = self._loop.create_future()
         self._recv_waiter = waiter
         return waiter
@@ -569,11 +578,10 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     @cython.cfunc
     @cython.inline
     def _set_close_exception(self) -> None:
-        self._close_fut.set_result(None)
-
         handshake = self.transport.close_handshake
         if handshake is None:
             self._close_exc = ConnectionClosedError(None, None, None)
+            self._close_fut.set_result(None)
             return
         rcvd = handshake.recv
         sent = handshake.sent
@@ -586,6 +594,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         )
         exc_type = ConnectionClosedOK if ok else ConnectionClosedError
         self._close_exc = exc_type(rcvd, sent, rcvd_then_sent)
+        self._close_fut.set_result(None)
 
     @cython.cfunc
     @cython.inline
@@ -606,10 +615,8 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.cfunc
     @cython.inline
-    def _check_frame(self, frame: Optional[_BufferedFrame]) -> _BufferedFrame:
+    def _check_frame(self, frame: _BufferedFrame) -> _BufferedFrame:
         self._resume_reading_if_needed()
-        if frame is None:
-            raise self._close_exc
         return frame
 
     @cython.cfunc
@@ -717,7 +724,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         else:
             self.transport.send(msg_type, message, fin)
 
-    async def _wait_close_and_raise(self, exc=None) -> None:
+    async def _wait_close_and_raise(self, exc=None) -> NoReturn:
         # CANCELLATION:
         # _close_fut is supposed to be set only from on_ws_disconnected.
         # It is intentionally shielded.
