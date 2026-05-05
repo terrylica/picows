@@ -1437,6 +1437,7 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
             ) from None
 
         response.headers = CIMultiDict()
+        response.body = None
         for idx in range(1, len(lines)):
             line = <bytes>lines[idx]
             try:
