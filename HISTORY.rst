@@ -16,6 +16,9 @@ picows Release History
 * Added rsv2 and rsv3 to WSTransport send methods
 * WSTransport send, send_ping, send_pong, send_close can now accept `str` type as message. The message will be encoded as utf-8 before sending
 * User on_ws_connect and on_ws_frame implementation can now signalize protocol errors by raising WSProtocolError
+* Add is_disconnected property to WSTransport.
+* Fix send_* methods raising exceptions when attempting to send after connection abort and without prior CLOSE frame.
+* Add missing body attribute in WSUpgradeResponse at the client side.
 
 1.19.0 (2026-04-24)
 ------------------

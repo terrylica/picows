@@ -293,4 +293,25 @@ async def test_stress(use_aiofastnet, ssl_context):
 
             assert not client.is_paused
 
-#
+
+async def test_send_after_abort(use_aiofastnet, ssl_context):
+    ba = bytearray(b"1234567890123456")
+
+    # Test that any attempt to send after abort is no-op. No exception is raised
+
+    async with WSServer(ssl=ssl_context.server, use_aiofastnet=use_aiofastnet) as server:
+        async with WSClient(server, ssl_context=ssl_context.client, use_aiofastnet=use_aiofastnet) as client:
+            client.transport.disconnect(False)
+            client.transport.send(picows.WSMsgType.BINARY, b"halo")
+            client.transport.send_reuse_external_bytearray(picows.WSMsgType.BINARY, ba, 16)
+            assert client.transport.is_disconnected == False
+
+            await client.transport.wait_disconnected()
+            assert client.transport.is_disconnected == True
+
+            client.transport.send(picows.WSMsgType.BINARY, b"halo")
+            client.transport.send_reuse_external_bytearray(picows.WSMsgType.BINARY, ba, 16)
+
+            await asyncio.sleep(0.05)
+            client.transport.send(picows.WSMsgType.BINARY, b"halo")
+            client.transport.send_reuse_external_bytearray(picows.WSMsgType.BINARY, ba, 16)

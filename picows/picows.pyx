@@ -368,6 +368,7 @@ cdef class WSTransport:
         self.is_client_side = is_client_side
         self.is_secure = underlying_transport.get_extra_info('ssl_object') is not None
         self.is_close_frame_sent = False
+        self.is_disconnected = False
         self.auto_ping_expect_pong = False
         self.pong_received_at_future = None
         self.listener_proxy = None
@@ -449,7 +450,7 @@ cdef class WSTransport:
     cdef _send_buffer(self, WSMsgType msg_type,
                       char* msg_ptr, Py_ssize_t msg_size,
                       bint fin, bint rsv1, bint rsv2, bint rsv3):
-        if self.is_close_frame_sent:
+        if self.is_close_frame_sent or self.is_disconnected:
             self._logger.debug("Ignore attempt to send a message after WSMsgType.CLOSE has already been sent")
             return
 
@@ -464,7 +465,7 @@ cdef class WSTransport:
         self._fast_write(<char*>header_ptr, header_size + msg_size)
 
     cdef _send(self, WSMsgType msg_type, message, bint fin, bint rsv1, bint rsv2, bint rsv3):
-        if self.is_close_frame_sent:
+        if self.is_close_frame_sent or self.is_disconnected:
             self._logger.debug("Ignore attempt to send a message after WSMsgType.CLOSE has already been sent")
             return
 
@@ -1043,6 +1044,8 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
                     self._handshake_timeout, self._handshake_timeout_callback)
 
     def connection_lost(self, exc):
+        self.transport.is_disconnected = True
+
         self._logger.info("Disconnected")
 
         if self._handshake_complete_future.done():
