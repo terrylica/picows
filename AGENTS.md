@@ -38,6 +38,10 @@ examples - Various examples for users on how to use picows + perf_test that coul
 - `WSUpgradeRequest` / `WSUpgradeResponse` expose a mixed bytes/str API and this is public API.
   Request `method`, `path`, `version` and response `version` are low-level protocol bytes, while headers are decoded strings and response `status` is `HTTPStatus`.
   Do not change this shape casually in core or silently normalize it away in wrappers; treat it as a stable compatibility constraint unless an intentional breaking change is agreed.
+- In `picows` core, once a CLOSE frame has been sent, later send-side API calls are effectively no-ops.
+  This applies to `send_close()` as well as the other send methods.
+  Also, `disconnect()` and `wait_disconnected()` are safe to call multiple times.
+  Wrapper code should rely on these idempotency guarantees instead of adding its own state-based suppression around shutdown operations.
 
 ## Testing instructions
 - Run lint after updating code with:
