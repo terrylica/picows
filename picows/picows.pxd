@@ -97,12 +97,15 @@ cdef class WSTransport:
         readonly bint is_client_side
         readonly bint is_secure
         readonly bint is_close_frame_sent
+        readonly bint is_disconnected
 
+        # These are not public API, but accessed directly from WSProtocol
+        # Therefore without _. Perhaps I should add underscore, since accessing
+        # from Cython is possible for the user
         bint auto_ping_expect_pong
         object pong_received_at_future
         object listener_proxy
         object disconnected_future             #: asyncio.Future
-
 
         object _loop
         object _logger                         #: Logger

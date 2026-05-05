@@ -233,6 +233,17 @@ Classes
         :any:`WSTransport.send_pong`, and :any:`WSTransport.send_close`)
         are no-ops and do nothing.
 
+    .. py:attribute:: is_disconnected
+        :type: bool
+
+        Indicates whether the underlying asyncio transport has reported `connection_lost` event.
+        :any:`WSTransport.send_close`.
+
+        When this flag is ``True``, subsequent calls to send methods
+        (:any:`WSTransport.send`, :any:`WSTransport.send_ping`,
+        :any:`WSTransport.send_pong`, and :any:`WSTransport.send_close`)
+        are no-ops and do nothing.
+
     .. py:attribute:: request
         :type: WSUpgradeRequest
 
