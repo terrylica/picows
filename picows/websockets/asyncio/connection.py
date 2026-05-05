@@ -428,15 +428,15 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             self._write_ready = None
 
         # Wake up all waiters waiting for ping replies
-        for waiter, _ in self._pending_pings.values():
-            if not waiter.done():
-                waiter.set_exception(self._close_exc) # type: ignore[arg-type]
+        for ping_waiter, _ in self._pending_pings.values():
+            if not ping_waiter.done():
+                ping_waiter.set_exception(self._close_exc)
         self._pending_pings.clear()
 
         # Wake up all waiters waiting for current send to complete
-        for waiter in self._send_waiters:
-            if not waiter.done():
-                waiter.set_exception(self._close_exc)
+        for send_waiter in self._send_waiters:
+            if not send_waiter.done():
+                send_waiter.set_exception(self._close_exc)
         self._send_waiters.clear()
 
     @cython.ccall
@@ -724,11 +724,13 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         else:
             self.transport.send(msg_type, message, fin)
 
-    async def _wait_close_and_raise(self, exc=None) -> NoReturn:
+    async def _wait_close_and_raise(self, exc: Optional[BaseException]=None) -> NoReturn:
         # CANCELLATION:
         # _close_fut is supposed to be set only from on_ws_disconnected.
         # It is intentionally shielded.
         await asyncio.shield(self._close_fut)
+        assert self._close_exc is not None # pacify type checker
+        
         if exc is None:
             raise self._close_exc
         else:
