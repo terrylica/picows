@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
 
 import picows
 from multidict import CIMultiDict
 
 CloseCode = picows.WSCloseCode
+
+
+class State(IntEnum):
+    CONNECTING = 0
+    OPEN = 1
+    CLOSING = 2
+    CLOSED = 3
 
 
 @dataclass(slots=True)
@@ -43,6 +51,7 @@ class Response:
 
 
 __all__ = [
+    "State",
     "CloseCode",
     "Request",
     "Response",

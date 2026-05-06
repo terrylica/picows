@@ -6,8 +6,7 @@ import os
 import uuid
 import zlib
 from collections import deque
-from collections.abc import AsyncIterable, Generator, Iterable
-from enum import IntEnum
+from collections.abc import AsyncIterable, Iterable
 from time import monotonic
 from typing import Any, AsyncIterator, Awaitable, Optional, Sequence, \
     Union, Dict, Tuple, Iterator, Mapping, NoReturn
@@ -22,7 +21,7 @@ else:
 
 from picows import WSProtocolError
 
-from ..compat import CloseCode, Request, Response
+from ..compat import State, CloseCode, Request, Response
 from ..exceptions import (
     ConcurrencyError,
     ConnectionClosed,
@@ -34,11 +33,15 @@ from ..exceptions import (
 from ..typing import BytesLike, Data, DataLike, LoggerLike, Subprotocol
 
 
-class State(IntEnum):
-    CONNECTING = 0
-    OPEN = 1
-    CLOSING = 2
-    CLOSED = 3
+# cached for performance
+_ok_close_codes = cython.declare(set, {0, 1000, 1001})
+_asyncio_shield = cython.declare(object, asyncio.shield)
+
+# zlib/compress/decompress utils, cached for performance
+_empty_uncompressed_block = cython.declare(bytes, b"\x00\x00\xff\xff")
+_zlib_compressobj = cython.declare(object, zlib.compressobj)
+_zlib_decompressobj = cython.declare(object, zlib.decompressobj)
+_zlib_z_sync_flush = cython.declare(object, zlib.Z_SYNC_FLUSH)
 
 
 @cython.freelist(128)
@@ -58,17 +61,6 @@ def _make_buffered_frame(msg_type: WSMsgType, payload: bytes, fin: cython.bint) 
     self.payload = payload
     self.fin = fin
     return self
-
-
-# cached for performance
-_ok_close_codes = cython.declare(set, {0, 1000, 1001})
-
-
-# zlib/compress/decompress utils, cached for performance
-_empty_uncompressed_block = cython.declare(bytes, b"\x00\x00\xff\xff")
-_zlib_compressobj = cython.declare(object, zlib.compressobj)
-_zlib_decompressobj = cython.declare(object, zlib.decompressobj)
-_zlib_z_sync_flush = cython.declare(object, zlib.Z_SYNC_FLUSH)
 
 
 @cython.no_gc
@@ -318,20 +310,20 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     _paused_reading: cython.bint
     _recv_waiter: Optional[asyncio.Future[None]]
     _recv_queue: deque[_BufferedFrame]
-    _max_message_size: cython.Py_ssize_t
-    _max_queue_high: cython.Py_ssize_t
-    _max_queue_low: cython.Py_ssize_t
+    _max_message_size: cython.Py_ssize_t        # 0 - no limit
+    _max_queue_high: cython.Py_ssize_t          # 0 - no limit
+    _max_queue_low: cython.Py_ssize_t           # 0 - no limit
     _incoming_message_active: cython.bint
     _incoming_message_size: cython.Py_ssize_t
 
     # Close logic
+    _close_timeout: Optional[float]
     _close_fut: asyncio.Future[None]
     _close_exc: Optional[ConnectionClosed]
 
     _pending_pings: Dict[bytes, Tuple[asyncio.Future[float], float]]
     _ping_interval: Optional[float]
     _ping_timeout: Optional[float]
-    _close_timeout: Optional[float]
     _keepalive_task: Optional[asyncio.Task[None]]
     _latency: cython.double
 
@@ -375,13 +367,13 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         self._incoming_message_active = False
         self._incoming_message_size = 0
 
+        self._close_timeout = close_timeout
         self._close_fut = self._loop.create_future()
         self._close_exc: Optional[ConnectionClosed] = None
 
         self._pending_pings: dict[bytes, tuple[asyncio.Future[float], float]] = {}
         self._ping_interval = ping_interval
         self._ping_timeout = ping_timeout
-        self._close_timeout = close_timeout
         self._keepalive_task: Optional[asyncio.Task[None]] = None
         self._latency = 0.0
 
@@ -500,6 +492,28 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.cfunc
     @cython.inline
+    def _set_write_limits(self, write_limit: Union[int, tuple[int, Optional[int]]]) -> None:
+        if isinstance(write_limit, tuple):
+            high, low = write_limit
+        else:
+            high, low = write_limit, None
+        self.transport.underlying_transport.set_write_buffer_limits(high=high, low=low)
+
+    @cython.cfunc
+    @cython.inline
+    def _configure_extensions(self) -> None:
+        header_value = self._response.headers.get("Sec-WebSocket-Extensions")
+        if header_value is None:
+            return
+        if self._compression != "deflate":
+            raise InvalidHandshake("unexpected websocket extensions negotiated by server")
+        if not isinstance(header_value, str):
+            raise InvalidHandshake("invalid Sec-WebSocket-Extensions header")
+
+        self._permessage_deflate = _PerMessageDeflate.from_response_header(header_value)
+
+    @cython.cfunc
+    @cython.inline
     def _process_pong_frame(self, frame: WSFrame) -> None:
         ping = self._pending_pings.pop(frame.get_payload_as_bytes(), None)
         if ping is not None:
@@ -515,15 +529,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         close_message = frame.get_close_message()
         self.transport.send_close(close_code, close_message)
         self.transport.disconnect()
-
-    @cython.cfunc
-    @cython.inline
-    def _set_write_limits(self, write_limit: Union[int, tuple[int, Optional[int]]]) -> None:
-        if isinstance(write_limit, tuple):
-            high, low = write_limit
-        else:
-            high, low = write_limit, None
-        self.transport.underlying_transport.set_write_buffer_limits(high=high, low=low)
 
     @cython.cfunc
     @cython.inline
@@ -561,19 +566,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         waiter: asyncio.Future[None] = self._loop.create_future()
         self._recv_waiter = waiter
         return waiter
-
-    @cython.cfunc
-    @cython.inline
-    def _configure_extensions(self) -> None:
-        header_value = self._response.headers.get("Sec-WebSocket-Extensions")
-        if header_value is None:
-            return
-        if self._compression != "deflate":
-            raise InvalidHandshake("unexpected websocket extensions negotiated by server")
-        if not isinstance(header_value, str):
-            raise InvalidHandshake("invalid Sec-WebSocket-Extensions header")
-
-        self._permessage_deflate = _PerMessageDeflate.from_response_header(header_value)
 
     @cython.cfunc
     @cython.inline
@@ -706,6 +698,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.cfunc
     @cython.inline
+    @cython.exceptval(check=False)
     def _is_in_open_state(self) -> cython.bint:
         # Before on_ws_connected, self.transport is None
         # on_ws_frame immediately send CLOSE reply on incoming CLOSE frame, so receiving CLOSE == is_close_frame_sent
@@ -728,9 +721,9 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         # CANCELLATION:
         # _close_fut is supposed to be set only from on_ws_disconnected.
         # It is intentionally shielded.
-        await asyncio.shield(self._close_fut)
+        await _asyncio_shield(self._close_fut)
         assert self._close_exc is not None # pacify type checker
-        
+
         if exc is None:
             raise self._close_exc
         else:
@@ -760,7 +753,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         # _write_ready future is shielded intentionally. It is only supposed to
         # be set from resume_writing and on_ws_disconnected.
         assert self._write_ready is not None
-        await asyncio.shield(self._write_ready)
+        await _asyncio_shield(self._write_ready)
         if not self._is_in_open_state():
             await self._wait_close_and_raise()
 
@@ -778,6 +771,16 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.cfunc
     @cython.inline
+    def _check_fragment_type(self, message: DataLike, first_is_str: cython.bint) -> None:
+        if first_is_str and isinstance(message, str):
+            return
+        elif not first_is_str and isinstance(message, (bytes, bytearray, memoryview)):
+            return
+
+        raise TypeError("all fragments must be of the same category: str vs bytes-like")
+
+    @cython.cfunc
+    @cython.inline
     def _release_send(self) -> None:
         waiter: asyncio.Future[None]
 
@@ -790,53 +793,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
                 return
 
         self._send_in_progress = False
-
-    async def send(
-        self,
-        message: Union[DataLike, Iterable[DataLike], AsyncIterator[DataLike]],
-        text: Optional[bool] = None,
-    ) -> None:
-        # send doesn't directly wait on helper futures. It is very tricky to handle
-        # disconnects and cancellations properly. send delegates this to
-        # _wait_* helpers.
-        if not self._is_in_open_state():
-            await self._wait_close_and_raise()
-
-        if self._send_in_progress:
-            await self._wait_send_turn()
-        else:
-            self._send_in_progress = True
-
-        try:
-            if isinstance(message, (str, bytes, bytearray, memoryview)):
-                if isinstance(message, str):
-                    msg_type = WSMsgType.BINARY if text is False else WSMsgType.TEXT
-                else:
-                    msg_type = WSMsgType.TEXT if text else WSMsgType.BINARY
-
-                self._encode_and_send(msg_type, message, True)
-
-                if self._write_ready is not None:
-                    await self._wait_write_ready()
-            # Catch a common mistake -- passing a dict to send().
-            elif isinstance(message, Mapping):
-                raise TypeError("data is a dict-like object")
-            elif isinstance(message, (AsyncIterable, Iterable)):
-                await self._send_fragments(message, text)  # type: ignore[arg-type]
-            else:
-                raise TypeError(f"message has unsupported type {type(message).__name__}")
-        finally:
-            self._release_send()
-
-    @cython.cfunc
-    @cython.inline
-    def _check_fragment_type(self, message: DataLike, first_is_str: cython.bint) -> None:
-        if first_is_str and isinstance(message, str):
-            return
-        elif not first_is_str and isinstance(message, (bytes, bytearray, memoryview)):
-            return
-
-        raise TypeError("all fragments must be of the same category: str vs bytes-like")
 
     async def _send_fragments(
         self,
@@ -906,6 +862,43 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, "error in fragmented message")
             self.transport.disconnect(False)
             raise
+
+    async def send(
+        self,
+        message: Union[DataLike, Iterable[DataLike], AsyncIterator[DataLike]],
+        text: Optional[bool] = None,
+    ) -> None:
+        # send doesn't directly wait on helper futures. It is very tricky to handle
+        # disconnects and cancellations properly. send delegates this to
+        # _wait_* helpers.
+        if not self._is_in_open_state():
+            await self._wait_close_and_raise()
+
+        if self._send_in_progress:
+            await self._wait_send_turn()
+        else:
+            self._send_in_progress = True
+
+        try:
+            if isinstance(message, (str, bytes, bytearray, memoryview)):
+                if isinstance(message, str):
+                    msg_type = WSMsgType.BINARY if text is False else WSMsgType.TEXT
+                else:
+                    msg_type = WSMsgType.TEXT if text else WSMsgType.BINARY
+
+                self._encode_and_send(msg_type, message, True)
+
+                if self._write_ready is not None:
+                    await self._wait_write_ready()
+            # Catch a common mistake -- passing a dict to send().
+            elif isinstance(message, Mapping):
+                raise TypeError("data is a dict-like object")
+            elif isinstance(message, (AsyncIterable, Iterable)):
+                await self._send_fragments(message, text)  # type: ignore[arg-type]
+            else:
+                raise TypeError(f"message has unsupported type {type(message).__name__}")
+        finally:
+            self._release_send()
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         if self._send_in_progress:

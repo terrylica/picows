@@ -1,9 +1,9 @@
 from .client import connect
-from .connection import ClientConnection, State, process_exception
+from .connection import ClientConnection, process_exception
+from ..compat import State
 
 __all__ = [
     "ClientConnection",
-    "State",
     "connect",
     "process_exception",
 ]
