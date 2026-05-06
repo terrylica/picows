@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import http
 import logging
 import os
+import sys
 import uuid
+import weakref
 import zlib
 from collections import deque
 from collections.abc import AsyncIterable, Iterable
@@ -12,6 +15,7 @@ from typing import Any, AsyncIterator, Awaitable, Optional, Sequence, \
     Union, Dict, Tuple, Iterator, Mapping, NoReturn
 
 import cython
+from multidict import CIMultiDict
 
 if cython.compiled:
     from cython.cimports.picows.picows import WSListener, WSTransport, WSFrame, \
@@ -30,7 +34,7 @@ from ..exceptions import (
     InvalidHandshake,
     InvalidStatus,
 )
-from ..typing import BytesLike, Data, DataLike, LoggerLike, Subprotocol
+from ..typing import BytesLike, Data, DataLike, LoggerLike, StatusLike, Subprotocol
 
 
 # cached for performance
@@ -153,6 +157,18 @@ class _PerMessageDeflate:
 
         return self
 
+    @classmethod
+    def enabled(cls) -> _PerMessageDeflate:
+        self: _PerMessageDeflate = _PerMessageDeflate.__new__(_PerMessageDeflate)
+        self.remote_no_context_takeover = False
+        self.local_no_context_takeover = False
+        self.remote_max_window_bits = -15
+        self.local_max_window_bits = -15
+        self._decoder = _zlib_decompressobj(wbits=self.remote_max_window_bits)
+        self._encoder = _zlib_compressobj(wbits=self.local_max_window_bits)
+        self._decode_cont_data = False
+        return self
+
     @cython.cfunc
     @cython.inline
     def decode_frame(self, frame: WSFrame, max_length: cython.Py_ssize_t) -> bytes:
@@ -263,8 +279,7 @@ def _normalize_watermarks(
     return max_queue, max_queue // 4
 
 
-@cython.cfunc
-@cython.inline
+@cython.ccall
 def _resolve_logger(logger: LoggerLike) -> Union[logging.Logger, logging.LoggerAdapter[Any]]:
     if logger is None:
         return logging.getLogger("websockets.client")
@@ -282,6 +297,27 @@ def process_exception(exc: Exception) -> Optional[Exception]:
         if int(status) in {500, 502, 503, 504}:
             return None
     return exc
+
+
+def _default_server_header() -> str:
+    return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/0"
+
+
+_pending_server_requests: weakref.WeakKeyDictionary[Any, Request] = weakref.WeakKeyDictionary()
+_pending_server_responses: weakref.WeakKeyDictionary[Any, Response] = weakref.WeakKeyDictionary()
+_pending_server_usernames: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+
+
+def stash_server_request(connection: Any, request: Request) -> None:
+    _pending_server_requests[connection] = request
+
+
+def stash_server_response(connection: Any, response: Response) -> None:
+    _pending_server_responses[connection] = response
+
+
+def stash_server_username(connection: Any, username: str) -> None:
+    _pending_server_usernames[connection] = username
 
 
 @cython.cclass
@@ -782,8 +818,9 @@ class ClientConnection(WSListener):  # type: ignore[misc]
     @cython.cfunc
     @cython.inline
     def _release_send(self) -> None:
-        waiter: asyncio.Future[None]
+        self._send_in_progress = False
 
+        waiter: asyncio.Future[None]
         while self._send_waiters:
             waiter = self._send_waiters.popleft()
             # Some waiters may be canceled, that is why we have defensive check
@@ -791,8 +828,6 @@ class ClientConnection(WSListener):  # type: ignore[misc]
             if not waiter.done():
                 waiter.set_result(None)
                 return
-
-        self._send_in_progress = False
 
     async def _send_fragments(
         self,
@@ -1043,3 +1078,93 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         if handshake.sent is not None:
             return _coerce_close_reason(handshake.sent.reason)  # type: ignore[no-any-return]
         return None
+
+
+def broadcast_message(connection: ClientConnection, msg_type: WSMsgType, message: DataLike) -> bool:
+    if connection._send_in_progress:
+        return False
+    connection._encode_and_send(msg_type, message, True)
+    return True
+
+
+@cython.cclass
+class ServerConnection(ClientConnection):
+    server: Any
+    handler: Any
+    handler_kwargs: Mapping[str, Any]
+
+    def __init__(
+        self,
+        server: Any,
+        *,
+        ping_interval: Optional[float] = 20,
+        ping_timeout: Optional[float] = 20,
+        close_timeout: Optional[float] = 10,
+        max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
+        write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
+        max_message_size: Optional[int] = 1024 * 1024,
+        logger: LoggerLike = None,
+        compression: Optional[str] = None,
+    ):
+        super().__init__(
+            ping_interval=ping_interval,
+            ping_timeout=ping_timeout,
+            close_timeout=close_timeout,
+            max_queue=max_queue,
+            write_limit=write_limit,
+            max_message_size=max_message_size,
+            logger=logger,
+            subprotocols=None,
+            compression=compression,
+        )
+        self.server = server
+        self.handler = None
+        self.handler_kwargs = {}
+
+    @cython.ccall
+    def on_ws_connected(self, transport: WSTransport) -> None:
+        self.transport = transport
+        request = _pending_server_requests.pop(self, None)
+        response = _pending_server_responses.pop(self, None)
+        self._request = request if request is not None else Request.from_picows(transport.request)
+        self._response = response if response is not None else Response.from_picows(transport.response)
+        try:
+            self._subprotocol = _resolve_subprotocol(None, self._response)
+            self._configure_extensions()
+        except InvalidHandshake as exc:
+            self._connect_exception = exc
+            self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, str(exc))
+            self.transport.disconnect(False)
+            return
+        self._set_write_limits(self._write_limit)
+        if self._ping_interval is not None and self._keepalive_task is None:
+            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+        self.server.loop.call_soon(self.server.start_connection_handler, self)
+
+    @property
+    def username(self) -> str:
+        try:
+            return _pending_server_usernames[self]
+        except KeyError as exc:
+            raise AttributeError("username") from exc
+
+    def respond(self, status: StatusLike, text: str) -> Response:
+        body = text.encode("utf-8")
+        request = _pending_server_requests.get(self)
+        headers = (
+            type(request.headers)({
+                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Length": str(len(body)),
+            })
+            if request is not None
+            else CIMultiDict({
+                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Length": str(len(body)),
+            })
+        )
+        return Response(
+            status_code=int(status),
+            reason_phrase=http.HTTPStatus(status).phrase,
+            headers=headers,
+            body=body,
+        )

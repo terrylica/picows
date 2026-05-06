@@ -1,6 +1,8 @@
 from . import exceptions
 from .asyncio.client import connect
-from .asyncio.connection import ClientConnection, process_exception
+from .asyncio.connection import ClientConnection, ServerConnection, process_exception
+from .asyncio.router import Router, route
+from .asyncio.server import Server, basic_auth, broadcast, serve
 from .compat import CloseCode, Request, Response, State
 from .exceptions import (
     ConcurrencyError,
@@ -49,6 +51,9 @@ __all__ = [
     "CloseCode",
     "Data",
     "DataLike",
+    "Router",
+    "Server",
+    "ServerConnection",
     "ConcurrencyError",
     "ConnectionClosed",
     "ConnectionClosedError",
@@ -85,7 +90,11 @@ __all__ = [
     "StatusLike",
     "Subprotocol",
     "WebSocketException",
+    "basic_auth",
+    "broadcast",
     "connect",
     "exceptions",
     "process_exception",
+    "route",
+    "serve",
 ]

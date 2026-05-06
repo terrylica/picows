@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import sys
 from collections.abc import Generator
 from logging import getLogger
 from ssl import SSLContext
@@ -35,7 +36,6 @@ _PERMESSAGE_DEFLATE_REQUEST = "permessage-deflate; client_max_window_bits"
 
 
 def _default_user_agent() -> str:
-    import sys
     return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/0"
 
 

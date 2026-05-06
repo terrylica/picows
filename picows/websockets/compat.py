@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+from http import HTTPStatus
 
 import picows
 from multidict import CIMultiDict
@@ -48,6 +49,14 @@ class Response:
     @property
     def status(self) -> int:
         return self.status_code
+
+    def to_picows(self) -> picows.WSUpgradeResponse:
+        response = picows.WSUpgradeResponse()
+        response.version = b"HTTP/1.1"
+        response.status = HTTPStatus(self.status_code)
+        response.headers = self.headers.copy()
+        response.body = bytes(self.body)
+        return response
 
 
 __all__ = [
