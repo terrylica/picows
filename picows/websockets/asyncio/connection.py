@@ -1040,6 +1040,7 @@ def broadcast_message(connection: ConnectionBase, msg_type: WSMsgType, message: 
 @cython.cclass
 class ServerConnection(ConnectionBase):
     server: Any
+    _username: Optional[str]
 
     def __init__(
         self,
@@ -1049,6 +1050,7 @@ class ServerConnection(ConnectionBase):
         response: Response,
         subprotocol: Optional[Subprotocol],
         permessage_deflate: Optional[_PerMessageDeflate],
+        username: Optional[str] = None,
         ping_interval: Optional[float] = 20,
         ping_timeout: Optional[float] = 20,
         close_timeout: Optional[float] = 10,
@@ -1071,6 +1073,7 @@ class ServerConnection(ConnectionBase):
             logger=logger,
         )
         self.server = server
+        self._username = username
 
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
@@ -1079,3 +1082,7 @@ class ServerConnection(ConnectionBase):
         if self._ping_interval is not None and self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
         self.server.loop.call_soon(self.server.start_connection_handler, self)
+
+    @property
+    def username(self) -> Optional[str]:
+        return self._username

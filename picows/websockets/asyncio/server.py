@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import binascii
+import hmac
 import http
-import re
 import socket
 import sys
+from base64 import b64decode
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Iterable
+from inspect import isawaitable
 from logging import getLogger
 from typing import Any, Optional, Pattern, Sequence
 
 import picows
+from multidict import CIMultiDict
 
 from .connection import (
     ServerConnection,
@@ -66,6 +70,47 @@ def _origin_allowed(
     return False
 
 
+def _ensure_sync_result(value: Any, hook_name: str) -> Any:
+    if isawaitable(value):
+        close = getattr(value, "close", None)
+        if close is not None:
+            close()
+        raise NotImplementedError(f"async {hook_name} hooks aren't supported by picows.websockets server yet")
+    return value
+
+
+def _make_error_response(
+    status: http.HTTPStatus,
+    body: bytes,
+) -> Response:
+    return Response(
+        status_code=int(status),
+        reason_phrase=status.phrase,
+        headers=CIMultiDict({"Content-Type": "text/plain; charset=utf-8"}),
+        body=body,
+    )
+
+
+def _basic_auth_unauthorized_response(message: bytes, realm: str) -> Response:
+    response = _make_error_response(http.HTTPStatus.UNAUTHORIZED, message)
+    response.headers["WWW-Authenticate"] = f'Basic realm="{realm}"'
+    return response
+
+
+def _parse_basic_authorization(header_value: str) -> tuple[str, str]:
+    scheme, _, token = header_value.partition(" ")
+    if scheme.lower() != "basic" or not token:
+        raise ValueError("unsupported authorization scheme")
+    try:
+        decoded = b64decode(token, validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
+        raise ValueError("invalid basic authorization header") from exc
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        raise ValueError("invalid basic authorization header")
+    return username, password
+
+
 def _select_subprotocol(
     connection: ServerHandshakeConnection,
     request: Request,
@@ -91,13 +136,99 @@ def _select_subprotocol(
     return None
 
 
-def basic_auth(*args: Any, **kwargs: Any) -> Any:
-    raise NotImplementedError("basic_auth() requires unsupported server process_request hooks")
+def _resolve_response_subprotocol(
+    request: Request,
+    response: Response,
+) -> Optional[Subprotocol]:
+    value = response.headers.get("Sec-WebSocket-Protocol")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise InvalidHandshake("invalid Sec-WebSocket-Protocol header")
+    header_value = request.headers.get("Sec-WebSocket-Protocol")
+    if header_value is None:
+        raise InvalidHandshake("server negotiated a subprotocol without a client offer")
+    offered = [item.strip() for item in header_value.split(",") if item.strip()]
+    if value not in offered:
+        raise InvalidHandshake(f"selected subprotocol isn't offered by client: {value}")
+    return value
+
+
+def basic_auth(
+    realm: str = "",
+    credentials: tuple[str, str] | Iterable[tuple[str, str]] | None = None,
+    check_credentials: Callable[[str, str], bool] | None = None,
+) -> Callable[[ServerHandshakeConnection, Request], Response | None]:
+    if (credentials is None) == (check_credentials is None):
+        raise ValueError("provide either credentials or check_credentials")
+
+    if credentials is not None:
+        if (
+            isinstance(credentials, tuple)
+            and len(credentials) == 2
+            and all(isinstance(item, str) for item in credentials)
+        ):
+            username = credentials[0]
+            password = credentials[1]
+            assert isinstance(username, str)
+            assert isinstance(password, str)
+            credentials_dict: dict[str, str] = {username: password}
+        elif isinstance(credentials, Iterable):
+            credentials_list: list[tuple[str, str]] = []
+            for item in credentials:
+                if (
+                    not isinstance(item, tuple)
+                    or len(item) != 2
+                    or not isinstance(item[0], str)
+                    or not isinstance(item[1], str)
+                ):
+                    raise TypeError(f"invalid credentials argument: {credentials}")
+                credentials_list.append(item)
+            credentials_dict = dict(credentials_list)
+        else:
+            raise TypeError(f"invalid credentials argument: {credentials}")
+
+        def check_credentials(username: str, password: str) -> bool:
+            expected_password: str | None = credentials_dict.get(username)
+            return (
+                expected_password is not None
+                and hmac.compare_digest(expected_password, password)
+            )
+
+    assert check_credentials is not None
+
+    def process_request(
+        connection: ServerHandshakeConnection,
+        request: Request,
+    ) -> Response | None:
+        authorization = request.headers.get("Authorization")
+        if authorization is None:
+            return _basic_auth_unauthorized_response(b"Missing credentials\n", realm)
+
+        try:
+            username, password = _parse_basic_authorization(authorization)
+        except ValueError:
+            return _basic_auth_unauthorized_response(b"Unsupported credentials\n", realm)
+
+        valid_credentials = check_credentials(username, password)
+        if isawaitable(valid_credentials):
+            close = getattr(valid_credentials, "close", None)
+            if close is not None:
+                close()
+            raise NotImplementedError("async basic_auth credential checks aren't supported yet")
+        if not valid_credentials:
+            return _basic_auth_unauthorized_response(b"Invalid credentials\n", realm)
+
+        connection.username = username
+        return None
+
+    return process_request
 
 
 @dataclass(slots=True)
 class ServerHandshakeConnection:
     request: Request
+    username: Optional[str] = None
 
     @property
     def state(self) -> State:
@@ -278,15 +409,6 @@ class serve:
             raise NotImplementedError("custom server extensions aren't supported by picows.websockets")
         if self.compression not in (None, "deflate"):
             raise NotImplementedError("only compression=None or 'deflate' are accepted")
-        unsupported = []
-        if self.process_request is not None:
-            unsupported.append("process_request")
-        if self.process_response is not None:
-            unsupported.append("process_response")
-        if unsupported:
-            raise NotImplementedError(
-                f"{', '.join(unsupported)} isn't supported by picows.websockets server yet"
-            )
 
         server = Server(
             self.handler,
@@ -302,61 +424,77 @@ class serve:
             upgrade_request: picows.WSUpgradeRequest,
         ) -> picows.WSUpgradeResponseWithListener:
             request = Request.from_picows(upgrade_request)
+            handshake_connection = ServerHandshakeConnection(request)
+            response: Response
+
             origin = request.headers.get("Origin")
             if origin is not None and not isinstance(origin, str):
                 raise InvalidOrigin(None)
             if not _origin_allowed(origin, self.origins):
-                return picows.WSUpgradeResponseWithListener(
-                    picows.WSUpgradeResponse.create_error_response(
-                        http.HTTPStatus.FORBIDDEN,
-                        b"Origin not allowed\n",
-                        {"Content-Type": "text/plain; charset=utf-8"},
-                    ),
-                    None,
+                response = _make_error_response(
+                    http.HTTPStatus.FORBIDDEN,
+                    b"Origin not allowed\n",
                 )
-
-            if server.close_task is not None:
-                return picows.WSUpgradeResponseWithListener(
-                    picows.WSUpgradeResponse.create_error_response(
-                        http.HTTPStatus.SERVICE_UNAVAILABLE,
-                        b"Server is shutting down.\n",
-                        {"Content-Type": "text/plain; charset=utf-8"},
-                    ),
-                    None,
+            elif server.close_task is not None:
+                response = _make_error_response(
+                    http.HTTPStatus.SERVICE_UNAVAILABLE,
+                    b"Server is shutting down.\n",
                 )
+            else:
+                headers = {}
+                if self.server_header is not None:
+                    headers["Server"] = self.server_header
+                subprotocol = _select_subprotocol(
+                    handshake_connection,
+                    request,
+                    self.subprotocols,
+                    self.select_subprotocol,
+                )
+                if subprotocol is not None:
+                    headers["Sec-WebSocket-Protocol"] = subprotocol
+                if self.compression == "deflate" and _supports_permessage_deflate(request):
+                    headers["Sec-WebSocket-Extensions"] = _PERMESSAGE_DEFLATE_REQUEST
+                response = Response.from_picows(picows.WSUpgradeResponse.create_101_response(headers))
 
-            headers = {}
-            if self.server_header is not None:
-                headers["Server"] = self.server_header
-            handshake_connection = ServerHandshakeConnection(request)
-            subprotocol = _select_subprotocol(
-                handshake_connection,
-                request,
-                self.subprotocols,
-                self.select_subprotocol,
-            )
-            if subprotocol is not None:
-                headers["Sec-WebSocket-Protocol"] = subprotocol
-            if self.compression == "deflate" and _supports_permessage_deflate(request):
-                headers["Sec-WebSocket-Extensions"] = _PERMESSAGE_DEFLATE_REQUEST
-            raw_response = picows.WSUpgradeResponse.create_101_response(headers)
-            response = Response.from_picows(raw_response)
-            permessage_deflate = configure_permessage_deflate(response, self.compression)
-            connection = ServerConnection(
-                server,
-                request=request,
-                response=response,
-                subprotocol=subprotocol,
-                permessage_deflate=permessage_deflate,
-                ping_interval=self.ping_interval,
-                ping_timeout=self.ping_timeout,
-                close_timeout=self.close_timeout,
-                max_queue=self.max_queue,
-                write_limit=self.write_limit,
-                max_message_size=max_message_size,
-                logger=self.logger,
-            )
-            return picows.WSUpgradeResponseWithListener(raw_response, connection)
+            if self.process_request is not None:
+                response_or_none = _ensure_sync_result(
+                    self.process_request(handshake_connection, request),
+                    "process_request",
+                )
+                if response_or_none is not None:
+                    if not isinstance(response_or_none, Response):
+                        raise TypeError("process_request must return a Response or None")
+                    response = response_or_none
+
+            response = _ensure_sync_result(
+                self.process_response(handshake_connection, request, response),
+                "process_response",
+            ) if self.process_response is not None else response
+
+            if not isinstance(response, Response):
+                raise TypeError("process_response must return a Response")
+
+            if response.status_code == int(http.HTTPStatus.SWITCHING_PROTOCOLS):
+                subprotocol = _resolve_response_subprotocol(request, response)
+                permessage_deflate = configure_permessage_deflate(response, self.compression)
+                connection = ServerConnection(
+                    server,
+                    request=request,
+                    response=response,
+                    subprotocol=subprotocol,
+                    permessage_deflate=permessage_deflate,
+                    username=handshake_connection.username,
+                    ping_interval=self.ping_interval,
+                    ping_timeout=self.ping_timeout,
+                    close_timeout=self.close_timeout,
+                    max_queue=self.max_queue,
+                    write_limit=self.write_limit,
+                    max_message_size=max_message_size,
+                    logger=self.logger,
+                )
+                return picows.WSUpgradeResponseWithListener(response.to_picows(), connection)
+            else:
+                return picows.WSUpgradeResponseWithListener(response.to_picows(), None)
 
         raw_server = await picows.ws_create_server(
             listener_factory,
