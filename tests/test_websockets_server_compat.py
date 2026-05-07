@@ -1,6 +1,4 @@
 import asyncio
-import base64
-import http
 import re
 
 import pytest
@@ -20,40 +18,46 @@ async def test_serve_echo_roundtrip():
             assert await ws.recv() == "hello"
 
 
-async def test_serve_process_request_can_reject_handshake():
+async def test_serve_rejects_process_request():
     async def handler(ws: websockets.ServerConnection) -> None:
         raise AssertionError("handler must not be called")
 
-    def process_request(ws: websockets.ServerConnection, request: websockets.Request) -> websockets.Response:
-        return ws.respond(http.HTTPStatus.FORBIDDEN, "nope")
-
-    async with websockets.serve(
-        handler, "127.0.0.1", 0, compression=None, process_request=process_request
-    ) as server:
-        port = server.sockets[0].getsockname()[1]
-        with pytest.raises(websockets.InvalidStatus):
-            async with websockets.connect(f"ws://127.0.0.1:{port}/", compression=None):
-                pass
+    with pytest.raises(NotImplementedError):
+        await websockets.serve(
+            handler,
+            "127.0.0.1",
+            0,
+            compression=None,
+            process_request=lambda ws, request: None,
+        )
 
 
-async def test_serve_process_response_can_mutate_headers():
+async def test_serve_rejects_process_response():
     async def handler(ws: websockets.ServerConnection) -> None:
-        await ws.wait_closed()
+        raise AssertionError("handler must not be called")
 
-    def process_response(
-        ws: websockets.ServerConnection,
-        request: websockets.Request,
-        response: websockets.Response,
-    ) -> websockets.Response | None:
-        response.headers["X-Test"] = "1"
-        return response
+    with pytest.raises(NotImplementedError):
+        await websockets.serve(
+            handler,
+            "127.0.0.1",
+            0,
+            compression=None,
+            process_response=lambda ws, request, response: response,
+        )
 
-    async with websockets.serve(
-        handler, "127.0.0.1", 0, compression=None, process_response=process_response
-    ) as server:
-        port = server.sockets[0].getsockname()[1]
-        async with websockets.connect(f"ws://127.0.0.1:{port}/", compression=None) as ws:
-            assert ws.response.headers["X-Test"] == "1"
+
+async def test_serve_rejects_create_connection():
+    async def handler(ws: websockets.ServerConnection) -> None:
+        raise AssertionError("handler must not be called")
+
+    with pytest.raises(NotImplementedError):
+        await websockets.serve(
+            handler,
+            "127.0.0.1",
+            0,
+            compression=None,
+            create_connection=websockets.ServerConnection,
+        )
 
 
 async def test_serve_accepts_allowed_origin():
@@ -97,52 +101,9 @@ async def test_serve_rejects_disallowed_origin():
                 pass
 
 
-async def test_basic_auth_accepts_valid_credentials_and_sets_username():
-    seen_usernames: list[str] = []
-
-    async def handler(ws: websockets.ServerConnection) -> None:
-        seen_usernames.append(ws.username)
-        await ws.send(ws.username)
-
-    async with websockets.serve(
-        handler,
-        "127.0.0.1",
-        0,
-        compression=None,
-        process_request=websockets.basic_auth(
-            realm="test",
-            credentials=("hello", "secret"),
-        ),
-    ) as server:
-        port = server.sockets[0].getsockname()[1]
-        token = base64.b64encode(b"hello:secret").decode()
-        async with websockets.connect(
-            f"ws://127.0.0.1:{port}/",
-            compression=None,
-            additional_headers={"Authorization": f"Basic {token}"},
-        ) as ws:
-            assert await ws.recv() == "hello"
-        assert seen_usernames == ["hello"]
-
-
-async def test_basic_auth_rejects_missing_credentials():
-    async def handler(ws: websockets.ServerConnection) -> None:
-        raise AssertionError("handler must not be called")
-
-    async with websockets.serve(
-        handler,
-        "127.0.0.1",
-        0,
-        compression=None,
-        process_request=websockets.basic_auth(
-            realm="test",
-            credentials=("hello", "secret"),
-        ),
-    ) as server:
-        port = server.sockets[0].getsockname()[1]
-        with pytest.raises(websockets.InvalidStatus):
-            async with websockets.connect(f"ws://127.0.0.1:{port}/", compression=None):
-                pass
+def test_basic_auth_is_not_supported_yet():
+    with pytest.raises(NotImplementedError):
+        websockets.basic_auth(realm="test", credentials=("hello", "secret"))
 
 
 async def test_serve_negotiates_subprotocol():
@@ -255,5 +216,5 @@ async def test_wait_closed_waits_for_handler_completion():
 
 
 def test_route_requires_werkzeug():
-    with pytest.raises(ImportError):
+    with pytest.raises((ImportError, NotImplementedError)):
         websockets.route(None)  # type: ignore[arg-type]

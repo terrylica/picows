@@ -1,7 +1,7 @@
 from . import exceptions
 from .asyncio.client import connect
 from .asyncio.connection import ClientConnection, ServerConnection, process_exception
-from .asyncio.router import Router, route
+from .asyncio.router import route
 from .asyncio.server import Server, basic_auth, broadcast, serve
 from .compat import CloseCode, Request, Response, State
 from .exceptions import (
@@ -51,7 +51,6 @@ __all__ = [
     "CloseCode",
     "Data",
     "DataLike",
-    "Router",
     "Server",
     "ServerConnection",
     "ConcurrencyError",

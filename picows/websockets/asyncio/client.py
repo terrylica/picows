@@ -83,7 +83,6 @@ class _Connect:
         max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
         write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
         logger: LoggerLike = None,
-        create_connection: Optional[type[ClientConnection]] = None,
         **kwargs: Any,
     ):
         self.uri = uri
@@ -103,7 +102,8 @@ class _Connect:
         self.max_queue = max_queue
         self.write_limit = write_limit
         self.logger = logger
-        self.connection_factory = create_connection or ClientConnection
+        if "create_connection" in kwargs:
+            raise NotImplementedError("create_connection isn't supported by picows.websockets yet")
         self.kwargs = kwargs
         self._connection: Optional[ClientConnection] = None
         self._backoff = 1.0
@@ -188,7 +188,7 @@ class _Connect:
             socket_factory = connect_override
 
         def listener_factory() -> ClientConnection:
-            return self.connection_factory(
+            return ClientConnection(
                 ping_interval=self.ping_interval,
                 ping_timeout=self.ping_timeout,
                 close_timeout=self.close_timeout,

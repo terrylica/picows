@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
-import hmac
 import http
-import inspect
 import re
 import socket
 import sys
 from collections.abc import Awaitable, Callable, Iterable
 from logging import getLogger
-from typing import Any, Optional, Pattern, Sequence, cast
+from typing import Any, Optional, Pattern, Sequence
 
 import picows
 
@@ -20,13 +16,10 @@ from .connection import (
     _default_server_header,
     _resolve_logger,
     broadcast_message,
-    stash_server_request,
-    stash_server_response,
-    stash_server_username,
 )
 from ..compat import Request, Response, State
 from ..exceptions import ConcurrencyError, InvalidHandshake, InvalidOrigin
-from ..typing import DataLike, HeadersLike, LoggerLike, Origin, StatusLike, Subprotocol
+from ..typing import DataLike, LoggerLike, Origin, Subprotocol
 
 __all__ = [
     "ServerConnection",
@@ -92,93 +85,8 @@ def _select_subprotocol(
     return None
 
 
-def _build_www_authenticate_basic(realm: str) -> str:
-    realm.encode("ascii")
-    return f'Basic realm="{realm}"'
-
-
-def _parse_authorization_basic(header: str) -> tuple[str, str]:
-    scheme, _, token = header.partition(" ")
-    if scheme.lower() != "basic" or not token:
-        raise InvalidHandshake("unsupported authorization header")
-    try:
-        decoded = base64.b64decode(token.encode("ascii"), validate=True).decode("utf-8")
-    except (UnicodeDecodeError, ValueError, binascii.Error) as exc:
-        raise InvalidHandshake("invalid basic authorization header") from exc
-    username, sep, password = decoded.partition(":")
-    if not sep:
-        raise InvalidHandshake("invalid basic authorization header")
-    return username, password
-
-
-def _is_credentials(value: object) -> bool:
-    return (
-        isinstance(value, tuple)
-        and len(value) == 2
-        and isinstance(value[0], str)
-        and isinstance(value[1], str)
-    )
-
-
-def basic_auth(
-    realm: str = "",
-    credentials: tuple[str, str] | Iterable[tuple[str, str]] | None = None,
-    check_credentials: Callable[[str, str], bool] | None = None,
-) -> Callable[[ServerConnection, Request], Response | None]:
-    if (credentials is None) == (check_credentials is None):
-        raise ValueError("provide either credentials or check_credentials")
-
-    if check_credentials is not None and inspect.iscoroutinefunction(check_credentials):
-        raise NotImplementedError("async check_credentials isn't supported by picows core yet")
-
-    if credentials is not None:
-        if _is_credentials(credentials):
-            credentials_list = [cast(tuple[str, str], credentials)]
-        else:
-            if not isinstance(credentials, Iterable):
-                raise TypeError(f"invalid credentials argument: {credentials}")
-            credentials_iterable = cast(Iterable[tuple[str, str]], credentials)
-            credentials_list = list(credentials_iterable)
-            if not all(_is_credentials(item) for item in credentials_list):
-                raise TypeError(f"invalid credentials argument: {credentials}")
-
-        credentials_dict = dict(credentials_list)
-
-        def check_credentials(username: str, password: str) -> bool:
-            try:
-                expected_password = credentials_dict[username]
-            except KeyError:
-                return False
-            return hmac.compare_digest(expected_password, password)
-
-    assert check_credentials is not None
-
-    def process_request(
-        connection: ServerConnection,
-        request: Request,
-    ) -> Response | None:
-        authorization = request.headers.get("Authorization")
-        if authorization is None:
-            response = connection.respond(http.HTTPStatus.UNAUTHORIZED, "Missing credentials\n")
-            response.headers["WWW-Authenticate"] = _build_www_authenticate_basic(realm)
-            return response
-
-        try:
-            username, password = _parse_authorization_basic(authorization)
-        except InvalidHandshake:
-            response = connection.respond(http.HTTPStatus.UNAUTHORIZED, "Unsupported credentials\n")
-            response.headers["WWW-Authenticate"] = _build_www_authenticate_basic(realm)
-            return response
-
-        if not check_credentials(username, password):
-            response = connection.respond(http.HTTPStatus.UNAUTHORIZED, "Invalid credentials\n")
-            response.headers["WWW-Authenticate"] = _build_www_authenticate_basic(realm)
-            return response
-
-        stash_server_username(connection, username)
-        return None
-
-    return process_request
+def basic_auth(*args: Any, **kwargs: Any) -> Any:
+    raise NotImplementedError("basic_auth() requires unsupported server process_request hooks")
 
 
 class Server:
@@ -186,16 +94,12 @@ class Server:
         self,
         handler: Callable[[ServerConnection], Awaitable[None]],
         *,
-        process_request: Callable[[ServerConnection, Request], Response | None] | None = None,
-        process_response: Callable[[ServerConnection, Request, Response], Response | None] | None = None,
         server_header: str | None = _default_server_header(),
         open_timeout: float | None = 10,
         logger: LoggerLike | None = None,
     ) -> None:
         self.loop = asyncio.get_running_loop()
         self.handler = handler
-        self.process_request = process_request
-        self.process_response = process_response
         self.server_header = server_header
         self.open_timeout = open_timeout
         self.logger = _resolve_logger(logger if logger is not None else getLogger("websockets.server"))
@@ -306,8 +210,6 @@ class serve:
         subprotocols: Sequence[Subprotocol] | None = None,
         select_subprotocol: Callable[[ServerConnection, Sequence[Subprotocol]], Subprotocol | None] | None = None,
         compression: str | None = "deflate",
-        process_request: Callable[[ServerConnection, Request], Response | None] | None = None,
-        process_response: Callable[[ServerConnection, Request, Response], Response | None] | None = None,
         server_header: str | None = _default_server_header(),
         open_timeout: float | None = 10,
         ping_interval: float | None = 20,
@@ -317,7 +219,6 @@ class serve:
         max_queue: int | None | tuple[int | None, int | None] = 16,
         write_limit: int | tuple[int, int | None] = 32768,
         logger: LoggerLike | None = None,
-        create_connection: type[ServerConnection] | None = None,
         **kwargs: Any,
     ):
         self.handler = handler
@@ -328,8 +229,6 @@ class serve:
         self.subprotocols = subprotocols
         self.select_subprotocol = select_subprotocol
         self.compression = compression
-        self.process_request = process_request
-        self.process_response = process_response
         self.server_header = server_header
         self.open_timeout = open_timeout
         self.ping_interval = ping_interval
@@ -339,7 +238,10 @@ class serve:
         self.max_queue = max_queue
         self.write_limit = write_limit
         self.logger = logger
-        self.connection_factory = create_connection or ServerConnection
+        if "create_connection" in kwargs:
+            raise NotImplementedError("create_connection isn't supported by picows.websockets server yet")
+        self.process_request = kwargs.pop("process_request", None)
+        self.process_response = kwargs.pop("process_response", None)
         self.kwargs = kwargs
         self._server: Server | None = None
 
@@ -361,15 +263,18 @@ class serve:
             raise NotImplementedError("custom server extensions aren't supported by picows.websockets")
         if self.compression not in (None, "deflate"):
             raise NotImplementedError("only compression=None or 'deflate' are accepted")
-        if self.process_request is not None and inspect.iscoroutinefunction(self.process_request):
-            raise NotImplementedError("async process_request isn't supported by picows core yet")
-        if self.process_response is not None and inspect.iscoroutinefunction(self.process_response):
-            raise NotImplementedError("async process_response isn't supported by picows core yet")
+        unsupported = []
+        if self.process_request is not None:
+            unsupported.append("process_request")
+        if self.process_response is not None:
+            unsupported.append("process_response")
+        if unsupported:
+            raise NotImplementedError(
+                f"{', '.join(unsupported)} isn't supported by picows.websockets server yet"
+            )
 
         server = Server(
             self.handler,
-            process_request=self.process_request,
-            process_response=self.process_response,
             server_header=self.server_header,
             open_timeout=self.open_timeout,
             logger=self.logger,
@@ -382,8 +287,41 @@ class serve:
             upgrade_request: picows.WSUpgradeRequest,
         ) -> picows.WSUpgradeResponseWithListener:
             request = Request.from_picows(upgrade_request)
-            connection = self.connection_factory(
+            origin = request.headers.get("Origin")
+            if origin is not None and not isinstance(origin, str):
+                raise InvalidOrigin(None)
+            if not _origin_allowed(origin, self.origins):
+                return picows.WSUpgradeResponseWithListener(
+                    picows.WSUpgradeResponse.create_error_response(
+                        http.HTTPStatus.FORBIDDEN,
+                        b"Origin not allowed\n",
+                        {"Content-Type": "text/plain; charset=utf-8"},
+                    ),
+                    None,
+                )
+
+            if server.close_task is not None:
+                return picows.WSUpgradeResponseWithListener(
+                    picows.WSUpgradeResponse.create_error_response(
+                        http.HTTPStatus.SERVICE_UNAVAILABLE,
+                        b"Server is shutting down.\n",
+                        {"Content-Type": "text/plain; charset=utf-8"},
+                    ),
+                    None,
+                )
+
+            headers = {}
+            if self.server_header is not None:
+                headers["Server"] = self.server_header
+            connection = ServerConnection(
                 server,
+                request=request,
+                response=Response(
+                    status_code=int(http.HTTPStatus.SWITCHING_PROTOCOLS),
+                    reason_phrase=http.HTTPStatus.SWITCHING_PROTOCOLS.phrase,
+                    headers=type(request.headers)({}),
+                    body=b"",
+                ),
                 ping_interval=self.ping_interval,
                 ping_timeout=self.ping_timeout,
                 close_timeout=self.close_timeout,
@@ -393,51 +331,20 @@ class serve:
                 logger=self.logger,
                 compression=self.compression,
             )
-            stash_server_request(connection, request)
-
-            response: Response | None = None
-
-            origin = request.headers.get("Origin")
-            if origin is not None and not isinstance(origin, str):
-                raise InvalidOrigin(None)
-            if not _origin_allowed(origin, self.origins):
-                response = connection.respond(http.HTTPStatus.FORBIDDEN, "Origin not allowed\n")
-
-            if self.process_request is not None and response is None:
-                response = self.process_request(connection, request)
-
-            if response is None:
-                if server.close_task is not None:
-                    response = connection.respond(http.HTTPStatus.SERVICE_UNAVAILABLE, "Server is shutting down.\n")
-                else:
-                    headers = {}
-                    if self.server_header is not None:
-                        headers["Server"] = self.server_header
-                    subprotocol = _select_subprotocol(connection, request, self.subprotocols, self.select_subprotocol)
-                    if subprotocol is not None:
-                        headers["Sec-WebSocket-Protocol"] = subprotocol
-                    if self.compression == "deflate" and _supports_permessage_deflate(request):
-                        headers["Sec-WebSocket-Extensions"] = _PERMESSAGE_DEFLATE_REQUEST
-                    response = Response(
-                        status_code=int(http.HTTPStatus.SWITCHING_PROTOCOLS),
-                        reason_phrase=http.HTTPStatus.SWITCHING_PROTOCOLS.phrase,
-                        headers=type(request.headers)(headers),
-                        body=b"",
-                    )
-
-            if self.process_response is not None:
-                updated = self.process_response(connection, request, response)
-                if updated is not None:
-                    response = updated
-
-            assert response is not None
-            stash_server_response(connection, response)
-            listener = connection if response.status_code == int(http.HTTPStatus.SWITCHING_PROTOCOLS) else None
-            if listener is not None:
-                raw_response = picows.WSUpgradeResponse.create_101_response(response.headers)
-            else:
-                raw_response = response.to_picows()
-            return picows.WSUpgradeResponseWithListener(raw_response, listener)
+            subprotocol = _select_subprotocol(connection, request, self.subprotocols, self.select_subprotocol)
+            if subprotocol is not None:
+                headers["Sec-WebSocket-Protocol"] = subprotocol
+            if self.compression == "deflate" and _supports_permessage_deflate(request):
+                headers["Sec-WebSocket-Extensions"] = _PERMESSAGE_DEFLATE_REQUEST
+            response = Response(
+                status_code=int(http.HTTPStatus.SWITCHING_PROTOCOLS),
+                reason_phrase=http.HTTPStatus.SWITCHING_PROTOCOLS.phrase,
+                headers=type(request.headers)(headers),
+                body=b"",
+            )
+            connection._initial_response = response
+            raw_response = picows.WSUpgradeResponse.create_101_response(headers)
+            return picows.WSUpgradeResponseWithListener(raw_response, connection)
 
         raw_server = await picows.ws_create_server(
             listener_factory,

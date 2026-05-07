@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import http
 import logging
 import os
 import sys
 import uuid
-import weakref
 import zlib
 from collections import deque
 from collections.abc import AsyncIterable, Iterable
@@ -15,7 +13,6 @@ from typing import Any, AsyncIterator, Awaitable, Optional, Sequence, \
     Union, Dict, Tuple, Iterator, Mapping, NoReturn
 
 import cython
-from multidict import CIMultiDict
 
 if cython.compiled:
     from cython.cimports.picows.picows import WSListener, WSTransport, WSFrame, \
@@ -34,7 +31,7 @@ from ..exceptions import (
     InvalidHandshake,
     InvalidStatus,
 )
-from ..typing import BytesLike, Data, DataLike, LoggerLike, StatusLike, Subprotocol
+from ..typing import BytesLike, Data, DataLike, LoggerLike, Subprotocol
 
 
 # cached for performance
@@ -303,25 +300,8 @@ def _default_server_header() -> str:
     return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/0"
 
 
-_pending_server_requests: weakref.WeakKeyDictionary[Any, Request] = weakref.WeakKeyDictionary()
-_pending_server_responses: weakref.WeakKeyDictionary[Any, Response] = weakref.WeakKeyDictionary()
-_pending_server_usernames: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
-
-
-def stash_server_request(connection: Any, request: Request) -> None:
-    _pending_server_requests[connection] = request
-
-
-def stash_server_response(connection: Any, response: Response) -> None:
-    _pending_server_responses[connection] = response
-
-
-def stash_server_username(connection: Any, username: str) -> None:
-    _pending_server_usernames[connection] = username
-
-
 @cython.cclass
-class ClientConnection(WSListener):  # type: ignore[misc]
+class ConnectionBase(WSListener):  # type: ignore[misc]
     id: uuid.UUID
     logger: Union[logging.Logger, logging.LoggerAdapter[Any]]
     transport: WSTransport
@@ -415,20 +395,7 @@ class ClientConnection(WSListener):  # type: ignore[misc]
 
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
-        self.transport = transport
-        self._request = Request.from_picows(transport.request)
-        self._response = Response.from_picows(transport.response)
-        try:
-            self._subprotocol = _resolve_subprotocol(self._subprotocols, self._response)
-            self._configure_extensions()
-        except InvalidHandshake as exc:
-            self._connect_exception = exc
-            self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, str(exc))
-            self.transport.disconnect(False)
-            return
-        self._set_write_limits(self._write_limit)
-        if self._ping_interval is not None and self._keepalive_task is None:
-            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+        raise NotImplementedError
 
     @cython.ccall
     def on_ws_disconnected(self, transport: WSTransport) -> None:
@@ -1080,7 +1047,52 @@ class ClientConnection(WSListener):  # type: ignore[misc]
         return None
 
 
-def broadcast_message(connection: ClientConnection, msg_type: WSMsgType, message: DataLike) -> bool:
+@cython.cclass
+class ClientConnection(ConnectionBase):
+    def __init__(
+        self,
+        *,
+        ping_interval: Optional[float] = 20,
+        ping_timeout: Optional[float] = 20,
+        close_timeout: Optional[float] = 10,
+        max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
+        write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
+        max_message_size: Optional[int] = 1024 * 1024,
+        logger: LoggerLike = None,
+        subprotocols: Optional[Sequence[Subprotocol]] = None,
+        compression: Optional[str] = None,
+    ):
+        super().__init__(
+            ping_interval=ping_interval,
+            ping_timeout=ping_timeout,
+            close_timeout=close_timeout,
+            max_queue=max_queue,
+            write_limit=write_limit,
+            max_message_size=max_message_size,
+            logger=logger,
+            subprotocols=subprotocols,
+            compression=compression,
+        )
+
+    @cython.ccall
+    def on_ws_connected(self, transport: WSTransport) -> None:
+        self.transport = transport
+        self._request = Request.from_picows(transport.request)
+        self._response = Response.from_picows(transport.response)
+        try:
+            self._subprotocol = _resolve_subprotocol(self._subprotocols, self._response)
+            self._configure_extensions()
+        except InvalidHandshake as exc:
+            self._connect_exception = exc
+            self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, str(exc))
+            self.transport.disconnect(False)
+            return
+        self._set_write_limits(self._write_limit)
+        if self._ping_interval is not None and self._keepalive_task is None:
+            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+
+
+def broadcast_message(connection: ConnectionBase, msg_type: WSMsgType, message: DataLike) -> bool:
     if connection._send_in_progress:
         return False
     connection._encode_and_send(msg_type, message, True)
@@ -1088,14 +1100,16 @@ def broadcast_message(connection: ClientConnection, msg_type: WSMsgType, message
 
 
 @cython.cclass
-class ServerConnection(ClientConnection):
+class ServerConnection(ConnectionBase):
     server: Any
-    handler: Any
-    handler_kwargs: Mapping[str, Any]
+    _initial_request: Optional[Request]
+    _initial_response: Optional[Response]
 
     def __init__(
         self,
         server: Any,
+        request: Request,
+        response: Response,
         *,
         ping_interval: Optional[float] = 20,
         ping_timeout: Optional[float] = 20,
@@ -1118,16 +1132,18 @@ class ServerConnection(ClientConnection):
             compression=compression,
         )
         self.server = server
-        self.handler = None
-        self.handler_kwargs = {}
+        self._initial_request = request
+        self._initial_response = response
 
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
         self.transport = transport
-        request = _pending_server_requests.pop(self, None)
-        response = _pending_server_responses.pop(self, None)
-        self._request = request if request is not None else Request.from_picows(transport.request)
-        self._response = response if response is not None else Response.from_picows(transport.response)
+        assert self._initial_request is not None
+        assert self._initial_response is not None
+        self._request = self._initial_request
+        self._response = self._initial_response
+        self._initial_request = None
+        self._initial_response = None
         try:
             self._subprotocol = _resolve_subprotocol(None, self._response)
             self._configure_extensions()
@@ -1140,31 +1156,3 @@ class ServerConnection(ClientConnection):
         if self._ping_interval is not None and self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
         self.server.loop.call_soon(self.server.start_connection_handler, self)
-
-    @property
-    def username(self) -> str:
-        try:
-            return _pending_server_usernames[self]
-        except KeyError as exc:
-            raise AttributeError("username") from exc
-
-    def respond(self, status: StatusLike, text: str) -> Response:
-        body = text.encode("utf-8")
-        request = _pending_server_requests.get(self)
-        headers = (
-            type(request.headers)({
-                "Content-Type": "text/plain; charset=utf-8",
-                "Content-Length": str(len(body)),
-            })
-            if request is not None
-            else CIMultiDict({
-                "Content-Type": "text/plain; charset=utf-8",
-                "Content-Length": str(len(body)),
-            })
-        )
-        return Response(
-            status_code=int(status),
-            reason_phrase=http.HTTPStatus(status).phrase,
-            headers=headers,
-            body=body,
-        )
