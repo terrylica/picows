@@ -265,10 +265,6 @@ def process_exception(exc: Exception) -> Optional[Exception]:
     return exc
 
 
-def _default_server_header() -> str:
-    return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/0"
-
-
 @cython.cclass
 class ConnectionBase(WSListener):  # type: ignore[misc]
     id: uuid.UUID

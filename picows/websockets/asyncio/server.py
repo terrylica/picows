@@ -14,7 +14,6 @@ import picows
 
 from .connection import (
     ServerConnection,
-    _default_server_header,
     _resolve_logger,
     broadcast_message,
 )
@@ -34,6 +33,10 @@ __all__ = [
 
 
 _PERMESSAGE_DEFLATE_REQUEST = "permessage-deflate"
+
+
+def _default_server_header() -> str:
+    return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/0"
 
 
 def _header_items(headers: Any) -> list[tuple[str, str]]:
