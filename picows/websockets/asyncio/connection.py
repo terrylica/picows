@@ -230,25 +230,6 @@ def _coerce_close_code(code: CloseCode) -> Optional[int]:
 def _coerce_close_reason(reason: Optional[str]) -> Optional[str]:
     return reason if reason is not None else None
 
-
-@cython.cfunc
-@cython.inline
-def _resolve_subprotocol(
-    subprotocols: Optional[Sequence[Subprotocol]],
-    response: Any,
-) -> Optional[Subprotocol]:
-    if response is None:
-        return None
-    value = response.headers.get("Sec-WebSocket-Protocol")
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise InvalidHandshake("server returned non-string subprotocol")
-    if subprotocols is not None and value not in subprotocols:
-        raise InvalidHandshake(f"unsupported subprotocol negotiated by server: {value}")
-    return value
-
-
 @cython.cfunc
 @cython.inline
 def _normalize_watermarks(
@@ -295,10 +276,7 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
     transport: WSTransport
     _request: Request
     _response: Response
-    _connect_exception: Optional[Exception]
-    _subprotocols: Optional[Sequence[Subprotocol]]
     _subprotocol: Optional[Subprotocol]
-    _compression: Optional[str]
     _permessage_deflate: Optional[_PerMessageDeflate]
     _loop: asyncio.AbstractEventLoop
 
@@ -334,6 +312,10 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
     def __init__(
         self,
         *,
+        request: Request,
+        response: Response,
+        subprotocol: Optional[Subprotocol],
+        permessage_deflate: Optional[_PerMessageDeflate],
         ping_interval: Optional[float] = 20,
         ping_timeout: Optional[float] = 20,
         close_timeout: Optional[float] = 10,
@@ -341,19 +323,14 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
         max_message_size: Optional[int] = 1024 * 1024,
         logger: LoggerLike = None,
-        subprotocols: Optional[Sequence[Subprotocol]] = None,
-        compression: Optional[str] = None,
     ):
         self.id = uuid.uuid4()
         self.logger = _resolve_logger(logger)
         self.transport = cython.cast(WSTransport, None)
-        self._request = None  # type: ignore[assignment]
-        self._response = None  # type: ignore[assignment]
-        self._connect_exception = None
-        self._subprotocols = subprotocols
-        self._subprotocol = None
-        self._compression = compression
-        self._permessage_deflate = None
+        self._request = request
+        self._response = response
+        self._subprotocol = subprotocol
+        self._permessage_deflate = permessage_deflate
         self._loop = asyncio.get_running_loop()
 
         self._send_in_progress = False
@@ -489,19 +466,6 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         else:
             high, low = write_limit, None
         self.transport.underlying_transport.set_write_buffer_limits(high=high, low=low)
-
-    @cython.cfunc
-    @cython.inline
-    def _configure_extensions(self) -> None:
-        header_value = self._response.headers.get("Sec-WebSocket-Extensions")
-        if header_value is None:
-            return
-        if self._compression != "deflate":
-            raise InvalidHandshake("unexpected websocket extensions negotiated by server")
-        if not isinstance(header_value, str):
-            raise InvalidHandshake("invalid Sec-WebSocket-Extensions header")
-
-        self._permessage_deflate = _PerMessageDeflate.from_response_header(header_value)
 
     @cython.cfunc
     @cython.inline
@@ -993,10 +957,6 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         return self._response
 
     @property
-    def connect_exception(self) -> Optional[Exception]:
-        return self._connect_exception
-
-    @property
     def local_address(self) -> Any:
         return self.transport.underlying_transport.get_extra_info("sockname")
 
@@ -1040,6 +1000,10 @@ class ClientConnection(ConnectionBase):
     def __init__(
         self,
         *,
+        request: Request,
+        response: Response,
+        subprotocol: Optional[Subprotocol],
+        permessage_deflate: Optional[_PerMessageDeflate],
         ping_interval: Optional[float] = 20,
         ping_timeout: Optional[float] = 20,
         close_timeout: Optional[float] = 10,
@@ -1047,10 +1011,12 @@ class ClientConnection(ConnectionBase):
         write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
         max_message_size: Optional[int] = 1024 * 1024,
         logger: LoggerLike = None,
-        subprotocols: Optional[Sequence[Subprotocol]] = None,
-        compression: Optional[str] = None,
     ):
         super().__init__(
+            request=request,
+            response=response,
+            subprotocol=subprotocol,
+            permessage_deflate=permessage_deflate,
             ping_interval=ping_interval,
             ping_timeout=ping_timeout,
             close_timeout=close_timeout,
@@ -1058,23 +1024,11 @@ class ClientConnection(ConnectionBase):
             write_limit=write_limit,
             max_message_size=max_message_size,
             logger=logger,
-            subprotocols=subprotocols,
-            compression=compression,
         )
 
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
         self.transport = transport
-        self._request = Request.from_picows(transport.request)
-        self._response = Response.from_picows(transport.response)
-        try:
-            self._subprotocol = _resolve_subprotocol(self._subprotocols, self._response)
-            self._configure_extensions()
-        except InvalidHandshake as exc:
-            self._connect_exception = exc
-            self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, str(exc))
-            self.transport.disconnect(False)
-            return
         self._set_write_limits(self._write_limit)
         if self._ping_interval is not None and self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
@@ -1095,6 +1049,10 @@ class ServerConnection(ConnectionBase):
         self,
         server: Any,
         *,
+        request: Request,
+        response: Response,
+        subprotocol: Optional[Subprotocol],
+        permessage_deflate: Optional[_PerMessageDeflate],
         ping_interval: Optional[float] = 20,
         ping_timeout: Optional[float] = 20,
         close_timeout: Optional[float] = 10,
@@ -1102,9 +1060,12 @@ class ServerConnection(ConnectionBase):
         write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
         max_message_size: Optional[int] = 1024 * 1024,
         logger: LoggerLike = None,
-        compression: Optional[str] = None,
     ):
         super().__init__(
+            request=request,
+            response=response,
+            subprotocol=subprotocol,
+            permessage_deflate=permessage_deflate,
             ping_interval=ping_interval,
             ping_timeout=ping_timeout,
             close_timeout=close_timeout,
@@ -1112,25 +1073,14 @@ class ServerConnection(ConnectionBase):
             write_limit=write_limit,
             max_message_size=max_message_size,
             logger=logger,
-            subprotocols=None,
-            compression=compression,
         )
         self.server = server
 
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
         self.transport = transport
-        self._request = Request.from_picows(transport.request)
-        self._response = Response.from_picows(transport.response)
-        try:
-            self._subprotocol = _resolve_subprotocol(None, self._response)
-            self._configure_extensions()
-        except InvalidHandshake as exc:
-            self._connect_exception = exc
-            self.transport.send_close(WSCloseCode.PROTOCOL_ERROR, str(exc))
-            self.transport.disconnect(False)
-            return
         self._set_write_limits(self._write_limit)
         if self._ping_interval is not None and self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
-        self.server.loop.call_soon(self.server.start_connection_handler, self)
+        self.server.loop.
+        (self.server.start_connection_handler, self)

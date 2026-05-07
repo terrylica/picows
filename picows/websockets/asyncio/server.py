@@ -5,6 +5,7 @@ import http
 import re
 import socket
 import sys
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Iterable
 from logging import getLogger
 from typing import Any, Optional, Pattern, Sequence
@@ -17,12 +18,14 @@ from .connection import (
     _resolve_logger,
     broadcast_message,
 )
-from ..compat import Request, State
+from .negotiation import configure_permessage_deflate
+from ..compat import Request, Response, State
 from ..exceptions import ConcurrencyError, InvalidHandshake, InvalidOrigin
 from ..typing import DataLike, LoggerLike, Origin, Subprotocol
 
 __all__ = [
     "ServerConnection",
+    "ServerHandshakeConnection",
     "Server",
     "serve",
     "broadcast",
@@ -61,10 +64,10 @@ def _origin_allowed(
 
 
 def _select_subprotocol(
-    connection: ServerConnection,
+    connection: ServerHandshakeConnection,
     request: Request,
     subprotocols: Optional[Sequence[Subprotocol]],
-    select_subprotocol: Optional[Callable[[ServerConnection, Sequence[Subprotocol]], Subprotocol | None]],
+    select_subprotocol: Optional[Callable[[ServerHandshakeConnection, Sequence[Subprotocol]], Subprotocol | None]],
 ) -> Optional[Subprotocol]:
     header_value = request.headers.get("Sec-WebSocket-Protocol")
     if header_value is None:
@@ -87,6 +90,15 @@ def _select_subprotocol(
 
 def basic_auth(*args: Any, **kwargs: Any) -> Any:
     raise NotImplementedError("basic_auth() requires unsupported server process_request hooks")
+
+
+@dataclass(slots=True)
+class ServerHandshakeConnection:
+    request: Request
+
+    @property
+    def state(self) -> State:
+        return State.CONNECTING
 
 
 class Server:
@@ -208,7 +220,7 @@ class serve:
         origins: Sequence[Origin | Pattern[str] | None] | None = None,
         extensions: Sequence[Any] | None = None,
         subprotocols: Sequence[Subprotocol] | None = None,
-        select_subprotocol: Callable[[ServerConnection, Sequence[Subprotocol]], Subprotocol | None] | None = None,
+        select_subprotocol: Callable[[ServerHandshakeConnection, Sequence[Subprotocol]], Subprotocol | None] | None = None,
         compression: str | None = "deflate",
         server_header: str | None = _default_server_header(),
         open_timeout: float | None = 10,
@@ -313,8 +325,26 @@ class serve:
             headers = {}
             if self.server_header is not None:
                 headers["Server"] = self.server_header
+            handshake_connection = ServerHandshakeConnection(request)
+            subprotocol = _select_subprotocol(
+                handshake_connection,
+                request,
+                self.subprotocols,
+                self.select_subprotocol,
+            )
+            if subprotocol is not None:
+                headers["Sec-WebSocket-Protocol"] = subprotocol
+            if self.compression == "deflate" and _supports_permessage_deflate(request):
+                headers["Sec-WebSocket-Extensions"] = _PERMESSAGE_DEFLATE_REQUEST
+            raw_response = picows.WSUpgradeResponse.create_101_response(headers)
+            response = Response.from_picows(raw_response)
+            permessage_deflate = configure_permessage_deflate(response, self.compression)
             connection = ServerConnection(
                 server,
+                request=request,
+                response=response,
+                subprotocol=subprotocol,
+                permessage_deflate=permessage_deflate,
                 ping_interval=self.ping_interval,
                 ping_timeout=self.ping_timeout,
                 close_timeout=self.close_timeout,
@@ -322,14 +352,7 @@ class serve:
                 write_limit=self.write_limit,
                 max_message_size=max_message_size,
                 logger=self.logger,
-                compression=self.compression,
             )
-            subprotocol = _select_subprotocol(connection, request, self.subprotocols, self.select_subprotocol)
-            if subprotocol is not None:
-                headers["Sec-WebSocket-Protocol"] = subprotocol
-            if self.compression == "deflate" and _supports_permessage_deflate(request):
-                headers["Sec-WebSocket-Extensions"] = _PERMESSAGE_DEFLATE_REQUEST
-            raw_response = picows.WSUpgradeResponse.create_101_response(headers)
             return picows.WSUpgradeResponseWithListener(raw_response, connection)
 
         raw_server = await picows.ws_create_server(

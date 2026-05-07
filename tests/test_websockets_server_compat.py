@@ -128,6 +128,45 @@ async def test_serve_negotiates_subprotocol():
             assert ws.subprotocol == "chat"
 
 
+async def test_select_subprotocol_receives_handshake_connection():
+    seen = {}
+
+    async def handler(ws: websockets.ServerConnection) -> None:
+        await ws.wait_closed()
+
+    def select_subprotocol(
+        ws: websockets.ServerHandshakeConnection,
+        offered: list[str],
+    ) -> str | None:
+        seen["type"] = type(ws)
+        seen["path"] = ws.request.path
+        seen["state"] = ws.state
+        seen["has_recv"] = hasattr(ws, "recv")
+        if "chat" in offered:
+            return "chat"
+        return None
+
+    async with websockets.serve(
+        handler,
+        "127.0.0.1",
+        0,
+        compression=None,
+        select_subprotocol=select_subprotocol,
+    ) as server:
+        port = server.sockets[0].getsockname()[1]
+        async with websockets.connect(
+            f"ws://127.0.0.1:{port}/room",
+            compression=None,
+            subprotocols=["chat"],
+        ) as ws:
+            assert ws.subprotocol == "chat"
+
+    assert seen["type"] is websockets.ServerHandshakeConnection
+    assert seen["path"] == "/room"
+    assert seen["state"] is websockets.State.CONNECTING
+    assert seen["has_recv"] is False
+
+
 async def test_broadcast_sends_to_open_connections():
     connections: list[websockets.ServerConnection] = []
 

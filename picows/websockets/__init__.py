@@ -2,7 +2,7 @@ from . import exceptions
 from .asyncio.client import connect
 from .asyncio.connection import ClientConnection, ServerConnection, process_exception
 from .asyncio.router import route
-from .asyncio.server import Server, basic_auth, broadcast, serve
+from .asyncio.server import Server, ServerHandshakeConnection, basic_auth, broadcast, serve
 from .compat import CloseCode, Request, Response, State
 from .exceptions import (
     ConcurrencyError,
@@ -52,6 +52,7 @@ __all__ = [
     "Data",
     "DataLike",
     "Server",
+    "ServerHandshakeConnection",
     "ServerConnection",
     "ConcurrencyError",
     "ConnectionClosed",

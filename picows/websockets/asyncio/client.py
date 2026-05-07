@@ -15,6 +15,8 @@ from .connection import (
     ClientConnection,
     process_exception,
 )
+from .negotiation import configure_permessage_deflate, resolve_subprotocol
+from ..compat import Request, Response
 from ..exceptions import (
     InvalidHandshake,
     InvalidHeader,
@@ -187,8 +189,19 @@ class _Connect:
 
             socket_factory = connect_override
 
-        def listener_factory() -> ClientConnection:
+        def listener_factory(
+            request: picows.WSUpgradeRequest,
+            response: picows.WSUpgradeResponse,
+        ) -> ClientConnection:
+            wrapped_request = Request.from_picows(request)
+            wrapped_response = Response.from_picows(response)
+            subprotocol = resolve_subprotocol(self.subprotocols, wrapped_response)
+            permessage_deflate = configure_permessage_deflate(wrapped_response, self.compression)
             return ClientConnection(
+                request=wrapped_request,
+                response=wrapped_response,
+                subprotocol=subprotocol,
+                permessage_deflate=permessage_deflate,
                 ping_interval=self.ping_interval,
                 ping_timeout=self.ping_timeout,
                 close_timeout=self.close_timeout,
@@ -196,8 +209,6 @@ class _Connect:
                 write_limit=self.write_limit,
                 max_message_size=max_message_size,
                 logger=self.logger,
-                subprotocols=self.subprotocols,
-                compression=self.compression,
             )
 
         try:
@@ -227,10 +238,7 @@ class _Connect:
             raise InvalidMessage(str(exc)) from exc
         except picows.WSHandshakeError as exc:
             raise InvalidHandshake(str(exc)) from exc
-
         assert isinstance(listener, ClientConnection)
-        if listener.connect_exception is not None:
-            raise listener.connect_exception
         return listener
 
     def _build_headers(self) -> list[tuple[str, str]]:
