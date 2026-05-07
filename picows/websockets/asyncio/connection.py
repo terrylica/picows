@@ -154,18 +154,6 @@ class _PerMessageDeflate:
 
         return self
 
-    @classmethod
-    def enabled(cls) -> _PerMessageDeflate:
-        self: _PerMessageDeflate = _PerMessageDeflate.__new__(_PerMessageDeflate)
-        self.remote_no_context_takeover = False
-        self.local_no_context_takeover = False
-        self.remote_max_window_bits = -15
-        self.local_max_window_bits = -15
-        self._decoder = _zlib_decompressobj(wbits=self.remote_max_window_bits)
-        self._encoder = _zlib_compressobj(wbits=self.local_max_window_bits)
-        self._decode_cont_data = False
-        return self
-
     @cython.cfunc
     @cython.inline
     def decode_frame(self, frame: WSFrame, max_length: cython.Py_ssize_t) -> bytes:
