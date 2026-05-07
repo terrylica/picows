@@ -88,6 +88,11 @@ This prints:
 Echo reply: Hello world
 ```
 
+`ws_connect()` accepts either a zero-argument client listener factory such as
+`ClientListener`, or a two-argument factory receiving
+`(request: WSUpgradeRequest, response: WSUpgradeResponse)` when the caller
+needs access to the negotiated handshake metadata before `on_ws_connected()`.
+
 ### Echo server
 
 ```python
@@ -198,4 +203,3 @@ pytest -s -v --cov=picows --cov-report=html
 pip install -r docs/requirements.txt
 make -C docs clean html
 ```
-
