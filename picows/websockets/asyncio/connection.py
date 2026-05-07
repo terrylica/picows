@@ -1082,5 +1082,4 @@ class ServerConnection(ConnectionBase):
         self._set_write_limits(self._write_limit)
         if self._ping_interval is not None and self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
-        self.server.loop.
-        (self.server.start_connection_handler, self)
+        self.server.loop.call_soon(self.server.start_connection_handler, self)
