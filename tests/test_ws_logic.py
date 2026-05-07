@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from hashlib import sha1
 from http import HTTPStatus
+from typing import Optional
 
 import async_timeout
 import pytest
@@ -181,6 +182,26 @@ async def test_request_path_and_params(request_path):
 
             assert client.transport.response.version == b"HTTP/1.1"
             assert client.transport.response.status == HTTPStatus.SWITCHING_PROTOCOLS
+
+
+async def test_client_factory_with_2_args():
+    request: Optional[picows.WSUpgradeRequest] = None
+    response: Optional[picows.WSUpgradeResponse] = None
+
+    def listener_factory(client_request, server_response):
+        nonlocal request, response
+        request = client_request
+        response = server_response
+        return AsyncClient()
+
+    async with WSServer() as server:
+        async with WSClient(server, listener_factory) as client:
+            assert request.method == b"GET"
+            assert response.status == HTTPStatus.SWITCHING_PROTOCOLS
+
+            client.transport.send(picows.WSMsgType.BINARY, b"test")
+            frame = await client.get_message()
+            assert frame.payload_as_bytes == b"test"
 
 
 async def test_route_not_found():

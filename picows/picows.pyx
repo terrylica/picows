@@ -1195,7 +1195,13 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
                 if self._state == WSParserState.WAIT_UPGRADE_RESPONSE:
                     # Upgrade response hasn't fully arrived yet
                     return False
-                self.listener = self._listener_factory()
+                try:
+                    self.listener = self._listener_factory(self.transport.request, response)
+                except TypeError as ex:
+                    try:
+                        self.listener = self._listener_factory()
+                    except TypeError:
+                        raise ex
                 self.transport.listener_proxy = weakref.proxy(self.listener)
                 self.transport.response = response
                 self._listener_factory = None

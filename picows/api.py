@@ -10,14 +10,17 @@ from typing import Callable, Optional, Union, Dict, Any, Awaitable, cast, TYPE_C
 
 from python_socks.async_.asyncio import Proxy
 
-from .types import (WSHeadersLike, WSUpgradeRequest, WSHost, WSPort,
+from .types import (WSHeadersLike, WSUpgradeRequest, WSUpgradeResponse, WSHost, WSPort,
                     WSUpgradeResponseWithListener, WSHandshakeError)
 from .picows import (WSListener, WSTransport, WSAutoPingStrategy,   # type: ignore [attr-defined]
                      WSProtocol)
 from .url import parse_url, WSInvalidURL, WSParsedURL
 
 
-WSListenerFactory = Callable[[], WSListener]
+WSListenerFactory = Union[
+    Callable[[], WSListener],
+    Callable[[WSUpgradeRequest, WSUpgradeResponse], WSListener],
+]
 WSServerListenerFactory = Callable[[WSUpgradeRequest], Union[WSListener, WSUpgradeResponseWithListener, None]]
 WSSocketFactory = Callable[[WSParsedURL], Union[Optional[socket.socket], Awaitable[Optional[socket.socket]]]]
 
@@ -215,8 +218,10 @@ async def ws_connect(ws_listener_factory: WSListenerFactory, # type: ignore [no-
     `asyncio.loop.create_connection <https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.create_connection>`_
 
     :param ws_listener_factory:
-        A parameterless factory function that returns a user handler.
-        User handler has to derive from :any:`WSListener`.
+        A factory function that returns a user handler.
+        The factory may either accept no arguments, or accept the negotiated
+        :any:`WSUpgradeRequest` and :any:`WSUpgradeResponse`.
+        The returned handler has to derive from :any:`WSListener`.
     :param url: Destination URL
     :param ssl_context: optional SSLContext to override default one when
         the wss scheme is used
@@ -281,7 +286,11 @@ async def ws_connect(ws_listener_factory: WSListenerFactory, # type: ignore [no-
         instead of ``loop.create_server``, ``loop.create_connection`` native method.
         **picows** will use **aiofastnet** by default if it is installed.
         You can override default behavior by using this argument.
-    :return: :any:`WSTransport` object and a user handler returned by `ws_listener_factory()`
+    :return:
+        :any:`WSTransport` object and a user handler returned by
+        `ws_listener_factory()`, or by
+        `ws_listener_factory(request, response)` when using the two-argument
+        client factory form.
     """
 
     assert "ssl" not in kwargs, "explicit 'ssl' argument for loop.create_connection is not supported"
