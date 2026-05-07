@@ -19,6 +19,7 @@ picows Release History
 * Add is_disconnected property to WSTransport.
 * Fix send_* methods raising exceptions when attempting to send after connection abort and without prior CLOSE frame.
 * Add missing body attribute in WSUpgradeResponse at the client side.
+* WSTransport.request was missing for the server side.
 
 1.19.0 (2026-04-24)
 ------------------

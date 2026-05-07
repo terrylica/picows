@@ -1216,6 +1216,7 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
             listener_factory = self._listener_factory
             self._listener_factory = None
             try:
+                self.transport.request = upgrade_request
                 listener_or_response_with_listener = listener_factory(upgrade_request)
                 if isinstance(listener_or_response_with_listener, WSUpgradeResponseWithListener):
                     self.listener = listener_or_response_with_listener.listener
