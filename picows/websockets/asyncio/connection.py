@@ -1102,14 +1102,10 @@ def broadcast_message(connection: ConnectionBase, msg_type: WSMsgType, message: 
 @cython.cclass
 class ServerConnection(ConnectionBase):
     server: Any
-    _initial_request: Optional[Request]
-    _initial_response: Optional[Response]
 
     def __init__(
         self,
         server: Any,
-        request: Request,
-        response: Response,
         *,
         ping_interval: Optional[float] = 20,
         ping_timeout: Optional[float] = 20,
@@ -1132,18 +1128,12 @@ class ServerConnection(ConnectionBase):
             compression=compression,
         )
         self.server = server
-        self._initial_request = request
-        self._initial_response = response
 
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
         self.transport = transport
-        assert self._initial_request is not None
-        assert self._initial_response is not None
-        self._request = self._initial_request
-        self._response = self._initial_response
-        self._initial_request = None
-        self._initial_response = None
+        self._request = Request.from_picows(transport.request)
+        self._response = Response.from_picows(transport.response)
         try:
             self._subprotocol = _resolve_subprotocol(None, self._response)
             self._configure_extensions()

@@ -17,7 +17,7 @@ from .connection import (
     _resolve_logger,
     broadcast_message,
 )
-from ..compat import Request, Response, State
+from ..compat import Request, State
 from ..exceptions import ConcurrencyError, InvalidHandshake, InvalidOrigin
 from ..typing import DataLike, LoggerLike, Origin, Subprotocol
 
@@ -315,13 +315,6 @@ class serve:
                 headers["Server"] = self.server_header
             connection = ServerConnection(
                 server,
-                request=request,
-                response=Response(
-                    status_code=int(http.HTTPStatus.SWITCHING_PROTOCOLS),
-                    reason_phrase=http.HTTPStatus.SWITCHING_PROTOCOLS.phrase,
-                    headers=type(request.headers)({}),
-                    body=b"",
-                ),
                 ping_interval=self.ping_interval,
                 ping_timeout=self.ping_timeout,
                 close_timeout=self.close_timeout,
@@ -336,13 +329,6 @@ class serve:
                 headers["Sec-WebSocket-Protocol"] = subprotocol
             if self.compression == "deflate" and _supports_permessage_deflate(request):
                 headers["Sec-WebSocket-Extensions"] = _PERMESSAGE_DEFLATE_REQUEST
-            response = Response(
-                status_code=int(http.HTTPStatus.SWITCHING_PROTOCOLS),
-                reason_phrase=http.HTTPStatus.SWITCHING_PROTOCOLS.phrase,
-                headers=type(request.headers)(headers),
-                body=b"",
-            )
-            connection._initial_response = response
             raw_response = picows.WSUpgradeResponse.create_101_response(headers)
             return picows.WSUpgradeResponseWithListener(raw_response, connection)
 

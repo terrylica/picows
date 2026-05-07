@@ -8,6 +8,8 @@ from picows import websockets
 
 async def test_serve_echo_roundtrip():
     async def handler(ws: websockets.ServerConnection) -> None:
+        assert ws.request.path == "/"
+        assert ws.response.status_code == 101
         message = await ws.recv()
         await ws.send(message)
 
