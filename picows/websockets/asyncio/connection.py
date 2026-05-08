@@ -425,7 +425,11 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         else:
             payload = frame.get_payload_as_bytes()
 
-        self._incoming_message_size = len(payload)
+        if frame.msg_type == WSMsgType.CONTINUATION:
+            self._incoming_message_size += len(payload)
+        else:
+            self._incoming_message_size = len(payload)
+
         if self._max_message_size > 0 and self._incoming_message_size > self._max_message_size:
             raise WSProtocolError(WSCloseCode.MESSAGE_TOO_BIG, "message too big")
 

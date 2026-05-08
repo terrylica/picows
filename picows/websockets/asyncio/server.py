@@ -43,10 +43,6 @@ def _default_server_header() -> str:
     return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/0"
 
 
-def _header_items(headers: Any) -> list[tuple[str, str]]:
-    return [] if headers is None else list(headers.items())
-
-
 def _supports_permessage_deflate(request: Request) -> bool:
     value = request.headers.get("Sec-WebSocket-Extensions")
     return isinstance(value, str) and "permessage-deflate" in value
@@ -240,14 +236,10 @@ class Server:
         self,
         handler: Callable[[ServerConnection], Awaitable[None]],
         *,
-        server_header: str | None = _default_server_header(),
-        open_timeout: float | None = 10,
         logger: LoggerLike | None = None,
     ) -> None:
         self.loop = asyncio.get_running_loop()
         self.handler = handler
-        self.server_header = server_header
-        self.open_timeout = open_timeout
         self.logger = _resolve_logger(logger if logger is not None else getLogger("websockets.server"))
         self.handlers: dict[ServerConnection, asyncio.Task[None]] = {}
         self.close_task: asyncio.Task[None] | None = None
@@ -412,8 +404,6 @@ class serve:
 
         server = Server(
             self.handler,
-            server_header=self.server_header,
-            open_timeout=self.open_timeout,
             logger=self.logger,
         )
 

@@ -60,10 +60,6 @@ def _process_proxy(proxy: Union[str, bool, None], secure: bool) -> Optional[str]
     raise InvalidProxy(str(proxy), "proxy must be None, True, or a proxy URL")
 
 
-def _normalize_size_limit(limit: Optional[int]) -> int:
-    return 0 if limit is None else limit
-
-
 class _Connect:
     def __init__(
         self,
