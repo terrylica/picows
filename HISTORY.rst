@@ -5,7 +5,7 @@ picows Release History
    :depth: 1
    :local:
 
-1.20.0 ()
+1.20.0 (2026-05-08)
 ------------------
 
 * ws_connect/ws_create_server logger_name parameter can now accept a logger-like object
