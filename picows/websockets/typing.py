@@ -1,21 +1,40 @@
 from __future__ import annotations
 
-import logging
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Optional, Protocol, Tuple, Union
 
 from picows.types import WSHeadersLike
 
-BytesLike = bytes | bytearray | memoryview
-Data = str | bytes
-DataLike = str | bytes | bytearray | memoryview
+BytesLike = Union[bytes, bytearray, memoryview]
+Data = Union[str, bytes]
+DataLike = Union[str, bytes, bytearray, memoryview]
 HeadersLike = WSHeadersLike
-LoggerLike = logging.Logger | logging.LoggerAdapter[Any] | str | None
-StatusLike = HTTPStatus | int
+
+
+class LoggerProtocol(Protocol):
+    @property
+    def debug(self) -> Any:
+        ...
+
+    @property
+    def info(self) -> Any:
+        ...
+
+    @property
+    def warning(self) -> Any:
+        ...
+
+    @property
+    def error(self) -> Any:
+        ...
+
+
+LoggerLike = Union[LoggerProtocol, str, None]
+StatusLike = Union[HTTPStatus, int]
 Origin = str
 Subprotocol = str
 ExtensionName = str
-ExtensionParameter = tuple[str, str | None]
+ExtensionParameter = Tuple[str, Optional[str]]
 
 __all__ = [
     "BytesLike",
@@ -25,6 +44,7 @@ __all__ = [
     "ExtensionParameter",
     "HeadersLike",
     "LoggerLike",
+    "LoggerProtocol",
     "Origin",
     "StatusLike",
     "Subprotocol",

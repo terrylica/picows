@@ -31,7 +31,7 @@ from ..exceptions import (
     InvalidHandshake,
     InvalidStatus,
 )
-from ..typing import BytesLike, Data, DataLike, LoggerLike, Subprotocol
+from ..typing import BytesLike, Data, DataLike, LoggerLike, LoggerProtocol, Subprotocol
 
 
 # cached for performance
@@ -246,7 +246,7 @@ def _normalize_watermarks(
 
 
 @cython.ccall
-def _resolve_logger(logger: LoggerLike) -> Union[logging.Logger, logging.LoggerAdapter[Any]]:
+def _resolve_logger(logger: LoggerLike) -> LoggerProtocol:
     if logger is None:
         return logging.getLogger("websockets.client")
     if isinstance(logger, str):
@@ -268,7 +268,7 @@ def process_exception(exc: Exception) -> Optional[Exception]:
 @cython.cclass
 class ConnectionBase(WSListener):  # type: ignore[misc]
     id: uuid.UUID
-    logger: Union[logging.Logger, logging.LoggerAdapter[Any]]
+    logger: LoggerProtocol
     transport: WSTransport
     _request: Request
     _response: Response
@@ -587,7 +587,8 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
 
             msg_type = frame.msg_type
             if frame.fin:
-                return self._decode_data(frame.payload, msg_type, decode) # type: ignore[no-any-return]
+                data: Data = self._decode_data(frame.payload, msg_type, decode)
+                return data
 
             frames = [frame]
             try:
@@ -601,7 +602,8 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
                     payloads.append(frame.payload)
 
                 payload = b"".join(payloads)
-                return self._decode_data(payload, msg_type, decode) # type: ignore[no-any-return]
+                data = self._decode_data(payload, msg_type, decode)
+                return data
             except asyncio.CancelledError:
                 self._recv_queue.extendleft(reversed(frames))
                 raise
@@ -719,7 +721,7 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         # CANCELLATION:
         # User async iterator is also getting canceled.
 
-        data: DataLike = await anext(async_iterator)
+        data: DataLike = await async_iterator.__anext__()
         if not self._is_in_open_state():
             await self._wait_close_and_raise()
         return data
@@ -848,7 +850,8 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
             elif isinstance(message, Mapping):
                 raise TypeError("data is a dict-like object")
             elif isinstance(message, (AsyncIterable, Iterable)):
-                await self._send_fragments(message, text)  # type: ignore[arg-type]
+                fragments: Union[AsyncIterable[DataLike], Iterable[DataLike]] = message  # type: ignore[assignment]
+                await self._send_fragments(fragments, text)
             else:
                 raise TypeError(f"message has unsupported type {type(message).__name__}")
         finally:

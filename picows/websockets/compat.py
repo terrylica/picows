@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 from http import HTTPStatus
+from typing import Union
 
 import picows
 from multidict import CIMultiDict
@@ -17,7 +18,7 @@ class State(IntEnum):
     CLOSED = 3
 
 
-@dataclass(slots=True)
+@dataclass
 class Request:
     path: str
     headers: CIMultiDict[str]
@@ -30,12 +31,12 @@ class Request:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class Response:
     status_code: int
     reason_phrase: str
     headers: CIMultiDict[str]
-    body: bytes | bytearray
+    body: Union[bytes, bytearray]
 
     @classmethod
     def from_picows(cls, response: picows.WSUpgradeResponse) -> Response:

@@ -208,6 +208,7 @@ class _Connect:
             )
 
         try:
+            logger_name: Any = self.logger if self.logger is not None else getLogger("websockets.client")
             _transport, listener = await picows.ws_connect(
                 listener_factory,
                 self.uri,
@@ -219,7 +220,7 @@ class _Connect:
                 extra_headers=extra_headers,
                 proxy=proxy,
                 socket_factory=socket_factory,
-                logger_name=self.logger if self.logger is not None else getLogger("websockets.client"),
+                logger_name=logger_name,
                 **conn_kwargs,
             )
         except picows.WSInvalidURL as exc:

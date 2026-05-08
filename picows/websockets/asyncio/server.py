@@ -26,6 +26,11 @@ from ..compat import Request, Response, State
 from ..exceptions import ConcurrencyError, InvalidHandshake, InvalidOrigin
 from ..typing import DataLike, LoggerLike, Origin, Subprotocol
 
+if sys.version_info >= (3, 11):
+    from builtins import ExceptionGroup
+else:
+    ExceptionGroup = Exception
+
 __all__ = [
     "ServerConnection",
     "ServerHandshakeConnection",
@@ -221,7 +226,7 @@ def basic_auth(
     return process_request
 
 
-@dataclass(slots=True)
+@dataclass
 class ServerHandshakeConnection:
     request: Request
     username: Optional[str] = None
@@ -486,6 +491,7 @@ class serve:
             else:
                 return picows.WSUpgradeResponseWithListener(response.to_picows(), None)
 
+        logger_name: Any = self.logger if self.logger is not None else getLogger("websockets.server")
         raw_server = await picows.ws_create_server(
             listener_factory,
             self.host,
@@ -494,7 +500,7 @@ class serve:
             enable_auto_ping=False,
             enable_auto_pong=True,
             max_frame_size=max_frame_size,
-            logger_name=self.logger if self.logger is not None else getLogger("websockets.server"),
+            logger_name=logger_name,
             **self.kwargs,
         )
         server.wrap(raw_server)
