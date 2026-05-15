@@ -3,7 +3,7 @@ from __future__ import annotations
 from http import HTTPStatus
 from typing import Any, Optional, Protocol, Tuple, Union
 
-from picows.types import WSHeadersLike
+from picows.common import WSHeadersLike
 
 BytesLike = Union[bytes, bytearray, memoryview]
 Data = Union[str, bytes]

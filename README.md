@@ -36,9 +36,11 @@ The above chart shows the performance of various echo clients communicating with
 
 ## 💡 Key Features
 
+- Faster (up to 2x) drop-in replacement for the popular [websockets](https://websockets.readthedocs.io/en/stable/) library. 
 - Maximally efficient WebSocket frame parser and builder implemented in C/Cython
 - Reuse memory as much as possible, avoid reallocations, and avoid unnecessary Python object creation
 - Use [aiofastnet](https://github.com/tarasko/aiofastnet) to achieve excellent TCP/TLS performance regardless of the event loop used
+- Lower-level core API with non-async data path, to reduce latency and achieve maximum performance
 - Provide a Cython `.pxd` for efficient integration of user Cythonized code with picows
 - Ability to check if a frame is the last one in the receiving buffer
 - Auto ping-pong with an option to customize ping/pong messages
@@ -54,10 +56,56 @@ pip install picows
 
 ## 🤔 Getting started
 
-### Echo client
+picows provides 2 different sets of API:
 
-Connects to an echo server, sends a message, and disconnects after receiving a reply.
+* reimplementation of the popular [websockets](https://websockets.readthedocs.io/en/stable/) 
+library async interface on top of the core API. You can use it as a drop in replacement if you 
+already use websockets library.  
 
+* efficient lower-level API (core) where you establish and control connection with async/await and 
+send/receive data using regular functions and callbacks.
+
+### websockets API (drop-in replacement)
+
+#### Client
+```python
+# Import picows.websockets instead of websockets
+from picows.websockets.asyncio.client import connect
+import asyncio
+
+
+async def hello():
+    async with connect("ws://localhost:8765") as websocket:
+        await websocket.send("Hello world!")
+        message = await websocket.recv()
+        print(message)
+
+
+if __name__ == "__main__":
+    asyncio.run(hello())
+```
+
+#### Server
+```python
+# Import picows.websockets instead of websockets
+from picows.websockets.asyncio.server import serve
+import asyncio
+
+
+async def echo(websocket):
+    async for message in websocket:
+        await websocket.send(message)
+
+
+async def main():
+    async with serve(echo, "localhost", 8765) as server:
+        await server.serve_forever()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+### Core (async ws_connect, non-async send and callback based receive)
 ```python
 import asyncio
 from picows import ws_connect, WSFrame, WSTransport, WSListener, WSMsgType, WSCloseCode
@@ -80,12 +128,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-```
-
-This prints:
-
-```text
-Echo reply: Hello world
 ```
 
 `ws_connect()` accepts either a zero-argument client listener factory such as

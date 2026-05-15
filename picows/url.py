@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import urllib.parse
 from typing import Optional
 
-from .types import WSError, WSHost, WSPort
+from .common import WSError, WSHost, WSPort
 
 # All characters from the gen-delims and sub-delims sets in RFC 3987.
 DELIMS = ":/?#[]@!$&'()*+,;="

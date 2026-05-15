@@ -1,14 +1,13 @@
 import asyncio
+from picows.websockets.asyncio.client import connect
 
-from picows import websockets
 
-
-async def main():
-    async with websockets.connect("ws://127.0.0.1:9001") as websocket:
-        await websocket.send("Hello world")
-        reply = await websocket.recv()
-        print(f"Echo reply: {reply}")
+async def hello():
+    async with connect("ws://localhost:8765") as websocket:
+        await websocket.send("Hello world!")
+        message = await websocket.recv()
+        print(message)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(hello())

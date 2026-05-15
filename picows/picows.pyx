@@ -22,11 +22,11 @@ from cpython.pythread cimport PyThread_get_thread_ident
 from libc.string cimport memmove, memcpy
 from libc.stdlib cimport rand
 
-from .types import (PICOWS_DEBUG_LL, WSUpgradeRequest, WSUpgradeResponse,
-                    WSUpgradeResponseWithListener,
-                    WSHandshakeError, WSInvalidMessageError, WSInvalidStatusError,
-                    WSInvalidHeaderError, WSInvalidUpgradeError,
-                    WSProtocolError, add_extra_headers)
+from .common import (PICOWS_DEBUG_LL, WSUpgradeRequest, WSUpgradeResponse,
+                     WSUpgradeResponseWithListener,
+                     WSHandshakeError, WSInvalidMessageError, WSInvalidStatusError,
+                     WSInvalidHeaderError, WSInvalidUpgradeError,
+                     WSProtocolError, add_extra_headers)
 
 
 cdef:

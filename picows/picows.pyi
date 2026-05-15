@@ -2,7 +2,7 @@ import asyncio
 from enum import Enum
 from typing import Optional
 
-from .types import (WSUpgradeRequest, WSUpgradeResponse, WSBuffer)
+from .common import (WSUpgradeRequest, WSUpgradeResponse, WSBuffer)
 
 
 class WSMsgType(Enum):
