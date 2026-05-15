@@ -62,7 +62,7 @@ picows provides 2 different sets of API:
 library async interface on top of the core API. You can use it as a drop in replacement if you 
 already use websockets library.  
 
-* efficient lower-level API (core) where you establish and control connection with async/await and 
+* more efficient lower-level API (core) where you establish and control connection with async/await and 
 send/receive data using regular functions and callbacks.
 
 ### websockets API (drop-in replacement)
@@ -105,7 +105,8 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
-### Core (async ws_connect, non-async send and callback based receive)
+### Core (async ws_connect, non-async send and callback-based receive)
+#### Client
 ```python
 import asyncio
 from picows import ws_connect, WSFrame, WSTransport, WSListener, WSMsgType, WSCloseCode
@@ -135,7 +136,7 @@ if __name__ == "__main__":
 `(request: WSUpgradeRequest, response: WSUpgradeResponse)` when the caller
 needs access to the negotiated handshake metadata before `on_ws_connected()`.
 
-### Echo server
+### Server
 
 ```python
 import asyncio
