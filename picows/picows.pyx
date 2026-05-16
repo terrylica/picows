@@ -238,6 +238,21 @@ cdef class WSFrame:
                 f"payload_sz={self.payload_size}, tail_sz={self.tail_size})")
 
 
+cpdef WSFrame _make_test_ws_frame(WSMsgType msg_type, bytes payload, bint fin, bint rsv1):
+    cdef WSFrame self = <WSFrame>WSFrame.__new__(WSFrame)
+    self._payload_obj = payload
+    self.payload_ptr = PyBytes_AS_STRING(payload)
+    self.payload_size = len(payload)
+    self.tail_size = 0
+    self.msg_type = msg_type
+    self.fin = fin
+    self.rsv1 = rsv1
+    self.rsv2 = False
+    self.rsv3 = False
+    self.last_in_buffer = True
+    return self
+
+
 cdef class MemoryBuffer:
     def __init__(self, Py_ssize_t initial_capacity):
         self.size = 0
@@ -1680,6 +1695,7 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
                               )
 
             frame = <WSFrame>WSFrame.__new__(WSFrame)
+            frame._payload_obj = None
             frame.payload_ptr = self._read_buffer.data + self._f_payload_start_pos
             frame.payload_size = self._f_payload_length
             frame.tail_size = self._f_new_data_start_pos - (self._f_curr_state_start_pos + self._f_payload_length)

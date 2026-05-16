@@ -8,6 +8,7 @@ import pytest
 import websockets as upstream_websockets
 from multidict import CIMultiDict
 
+from picows.picows import _make_test_ws_frame
 from picows import websockets
 from picows.websockets.asyncio.connection import _PerMessageDeflate
 from picows.websockets.asyncio.negotiation import configure_permessage_deflate, resolve_subprotocol
@@ -232,23 +233,23 @@ def test_permessage_deflate_decode_passthrough_and_protocol_error_branches():
     )
 
     assert permessage_deflate.decode_frame(
-        Frame(picows.WSMsgType.TEXT, b"plain", rsv1=False),
+        _make_test_ws_frame(picows.WSMsgType.TEXT, b"plain", fin=False, rsv1=False),
         0,
     ) == b"plain"
     assert permessage_deflate.decode_frame(
-        Frame(picows.WSMsgType.CONTINUATION, b"continuation", rsv1=False),
+        _make_test_ws_frame(picows.WSMsgType.CONTINUATION, b"continuation", fin=True, rsv1=False),
         0,
     ) == b"continuation"
 
     encoded = bytes(permessage_deflate.encode_frame(picows.WSMsgType.TEXT, b"compressed", True))
     assert permessage_deflate.decode_frame(
-        Frame(picows.WSMsgType.TEXT, encoded, rsv1=True),
+        _make_test_ws_frame(picows.WSMsgType.TEXT, encoded, fin=False, rsv1=True),
         100,
     ) == b"compressed"
 
     with pytest.raises(picows.WSProtocolError, match="unexpected rsv1"):
         permessage_deflate.decode_frame(
-            Frame(picows.WSMsgType.CONTINUATION, b"bad", rsv1=True),
+            _make_test_ws_frame(picows.WSMsgType.CONTINUATION, b"bad", fin=True, rsv1=True),
             0,
         )
 
