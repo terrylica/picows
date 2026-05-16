@@ -1,7 +1,7 @@
 .. py:currentmodule:: picows
 
-API reference
-====================
+Core API reference
+==================
 
 .. automodule:: picows
 
