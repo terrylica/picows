@@ -58,14 +58,14 @@ pip install picows
 
 picows provides 2 different sets of API:
 
-* reimplementation of the popular [websockets](https://websockets.readthedocs.io/en/stable/) 
-library async interface on top of the core API. You can use it as a drop in replacement if you 
-already use websockets library.  
+* Re-implementation of the popular [websockets](https://websockets.readthedocs.io/en/stable/) 
+library asyncio interface. This is a drop-in replacement, you would only need to change imports in 
+order to transition from **websockets** to **picows**. 
 
-* more efficient lower-level API (core) where you establish and control connection with async/await and 
-send/receive data using regular functions and callbacks.
+* Low-level core API. It is more efficient (lower latency, higher throughput, zero-copy)
+than high-level **websockets** API, but a few high-level (and not always required) features are missing.
 
-### websockets API (drop-in replacement)
+### websockets API
 
 #### Client
 ```python
@@ -105,7 +105,20 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
-### Core (async ws_connect, non-async send and callback-based receive)
+### Core API
+
+The Core API achieves superior performance by offering an efficient, non-async data path, similar to the
+[transport/protocol design from asyncio](https://docs.python.org/3/library/asyncio-protocol.html#asyncio-transports-protocols).
+
+The user handler receives WebSocket frame objects instead of complete messages.
+Since a message can span multiple frames, it is up to the user to decide the most
+effective strategy for concatenating them. Each frame object includes additional low-level
+details about the current parser state, which may help to further optimize the behavior of the user's application.
+
+Core API doesn't offer high-level features like permessage-deflate extension support and async iter interface for reading. This features are 
+often not required in the real world, significantly slow down the data path and make impossible to do the actual zero-copy interface.
+
+
 #### Client
 ```python
 import asyncio
@@ -130,11 +143,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
-
-`ws_connect()` accepts either a zero-argument client listener factory such as
-`ClientListener`, or a two-argument factory receiving
-`(request: WSUpgradeRequest, response: WSUpgradeResponse)` when the caller
-needs access to the negotiated handshake metadata before `on_ws_connected()`.
 
 ### Server
 
@@ -170,22 +178,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
-
-## :construction_worker: API Design
-
-The library achieves superior performance by offering an efficient, non-async data path, similar to the
-[transport/protocol design from asyncio](https://docs.python.org/3/library/asyncio-protocol.html#asyncio-transports-protocols).
-
-The user handler receives WebSocket frame objects instead of complete messages.
-Since a message can span multiple frames, it is up to the user to decide the most
-effective strategy for concatenating them. Each frame object includes additional low-level
-details about the current parser state, which may help to further optimize the behavior of the user's application.
-
-picows doesn't offer high-level features like permessage-deflate extension support and async iter interface for reading. This features are 
-often not required in the real world, significantly slow down the data path and make impossible to do the actual zero-copy interface.
-
-High-level features like these can be easily implemented on top of picows API in the most suitable way. 
-Check out [topic guides](https://picows.readthedocs.io/en/stable/guides.html) and [examples](https://github.com/tarasko/picows/tree/master/examples) for the most common usage patterns.
 
 ## :hammer: Contributing / Building From Source
 
