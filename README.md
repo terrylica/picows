@@ -60,10 +60,10 @@ picows provides 2 different sets of API:
 
 * Re-implementation of the popular [websockets](https://websockets.readthedocs.io/en/stable/) 
 library asyncio interface. This is a drop-in replacement, you would only need to change imports in 
-order to transition from **websockets** to **picows**. 
+order to transition from websockets to picows. 
 
 * Low-level core API. It is more efficient (lower latency, higher throughput, zero-copy)
-than high-level **websockets** API, but a few high-level (and not always required) features are missing.
+than high-level websockets API, but a few high-level (and not always required) features are missing.
 
 ### websockets API
 
