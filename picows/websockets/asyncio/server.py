@@ -21,10 +21,11 @@ from .connection import (
     _resolve_logger,
     broadcast_message,
 )
+from .limits import normalize_max_size
 from .negotiation import configure_permessage_deflate
 from ..compat import Request, Response, State
 from ..exceptions import ConcurrencyError, InvalidHandshake, InvalidOrigin
-from ..typing import DataLike, LoggerLike, Origin, Subprotocol
+from ..typing import DataLike, LoggerLike, MaxSize, Origin, Subprotocol
 
 if sys.version_info >= (3, 11):
     from builtins import ExceptionGroup
@@ -358,7 +359,7 @@ class serve:
         ping_interval: float | None = 20,
         ping_timeout: float | None = 20,
         close_timeout: float | None = 10,
-        max_size: int | None | tuple[int | None, int | None] = 1024 * 1024,
+        max_size: MaxSize = 1024 * 1024,
         max_queue: int | None | tuple[int | None, int | None] = 16,
         write_limit: int | tuple[int, int | None] = 32768,
         logger: LoggerLike | None = None,
@@ -412,8 +413,7 @@ class serve:
             logger=self.logger,
         )
 
-        max_message_size = self.max_size[0] if isinstance(self.max_size, tuple) else self.max_size
-        max_frame_size = 2 ** 31 - 1 if max_message_size is None else max_message_size
+        max_message_size, max_frame_size = normalize_max_size(self.max_size)
 
         def listener_factory(
             upgrade_request: picows.WSUpgradeRequest,
@@ -485,6 +485,7 @@ class serve:
                     max_queue=self.max_queue,
                     write_limit=self.write_limit,
                     max_message_size=max_message_size,
+                    max_frame_size=max_frame_size,
                     logger=self.logger,
                 )
                 return picows.WSUpgradeResponseWithListener(response.to_picows(), connection)

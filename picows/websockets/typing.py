@@ -9,6 +9,8 @@ BytesLike = Union[bytes, bytearray, memoryview]
 Data = Union[str, bytes]
 DataLike = Union[str, bytes, bytearray, memoryview]
 HeadersLike = WSHeadersLike
+MaxSize = Union[int, None, tuple[Optional[int], Optional[int]]]
+MaxQueue = Union[int, None, tuple[Optional[int], Optional[int]]]
 
 
 class LoggerProtocol(Protocol):
@@ -45,6 +47,8 @@ __all__ = [
     "HeadersLike",
     "LoggerLike",
     "LoggerProtocol",
+    "MaxQueue",
+    "MaxSize",
     "Origin",
     "StatusLike",
     "Subprotocol",

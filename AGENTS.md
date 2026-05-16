@@ -28,6 +28,14 @@ examples - Various examples for users on how to use picows + perf_test that coul
   We can skip complicated areas such as the full server interface, but simple surface-area compatibility matters.
   Type definitions, exception definitions, and other lightweight importable names should exist when upstream exposes them.
   People switching from `websockets` to `picows.websockets` should notice as little difference as possible.
+- For `picows.websockets` compatibility work, treat the original `websockets`
+  package as the behavioral source of truth.
+  When behavior is unclear, surprising, or test expectations need to change,
+  first verify the same scenario against the installed upstream `websockets`
+  package or its official tests/docs before changing implementation or tests.
+  Do not update tests to match current `picows.websockets` behavior unless it
+  has been confirmed to match upstream behavior, or unless an intentional
+  compatibility deviation has been explicitly agreed and documented.
 - In Cythonized Python modules, avoid `typing.cast(...)` in hot paths.
   Cython may compile `cast(...)` into a real runtime global lookup and function call instead of erasing it like a type checker would.
   Prefer control-flow narrowing, assertions, or narrowly scoped type-ignore comments when needed.

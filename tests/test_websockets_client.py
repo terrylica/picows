@@ -7,7 +7,8 @@ from multidict import CIMultiDict
 import picows
 from picows import websockets
 from picows.websockets.asyncio.client import _process_proxy
-from picows.websockets.asyncio.connection import _normalize_watermarks, _resolve_logger, process_exception
+from picows.websockets.asyncio.connection import _resolve_logger, process_exception
+from picows.websockets.asyncio.limits import normalize_watermarks
 from tests.utils import ServerEchoListener, WSServer
 
 
@@ -17,9 +18,9 @@ def test_client_private_option_helpers():
     with pytest.raises(websockets.InvalidProxy):
         _process_proxy(123, False)  # type: ignore[arg-type]
 
-    assert _normalize_watermarks(None) == (0, 0)
-    assert _normalize_watermarks((None, 1)) == (0, 0)
-    assert _normalize_watermarks((8, None)) == (8, 2)
+    assert normalize_watermarks(None) == (0, 0)
+    assert normalize_watermarks((None, 1)) == (0, 0)
+    assert normalize_watermarks((8, None)) == (8, 2)
     assert _resolve_logger("picows.test").name == "picows.test"
 
 

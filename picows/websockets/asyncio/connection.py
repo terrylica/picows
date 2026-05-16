@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 import uuid
 import zlib
 from collections import deque
 from collections.abc import AsyncIterable, Iterable
 from time import monotonic
-from typing import Any, AsyncIterator, Awaitable, Optional, Sequence, \
+from typing import Any, AsyncIterator, Awaitable, Optional, \
     Union, Dict, Tuple, Iterator, Mapping, NoReturn
 
 import cython
@@ -22,6 +21,7 @@ else:
 
 from picows import WSProtocolError
 
+from .limits import normalize_watermarks
 from ..compat import State, CloseCode, Request, Response
 from ..exceptions import (
     ConcurrencyError,
@@ -228,19 +228,6 @@ def _coerce_close_code(code: CloseCode) -> Optional[int]:
 def _coerce_close_reason(reason: Optional[str]) -> Optional[str]:
     return reason if reason is not None else None
 
-@cython.ccall
-def _normalize_watermarks(
-    max_queue: Union[int, tuple[Optional[int], Optional[int]], None],
-) -> tuple[cython.Py_ssize_t, cython.Py_ssize_t]:
-    if max_queue is None:
-        return 0, 0
-    if isinstance(max_queue, tuple):
-        high, low = max_queue
-        if high is None:
-            return 0, 0
-        return high, high // 4 if low is None else low
-    return max_queue, max_queue // 4
-
 
 @cython.ccall
 def _resolve_logger(logger: LoggerLike) -> LoggerProtocol:
@@ -286,6 +273,7 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
     _recv_waiter: Optional[asyncio.Future[None]]
     _recv_queue: deque[_BufferedFrame]
     _max_message_size: cython.Py_ssize_t        # 0 - no limit
+    _max_frame_size: cython.Py_ssize_t          # 0 - no limit
     _max_queue_high: cython.Py_ssize_t          # 0 - no limit
     _max_queue_low: cython.Py_ssize_t           # 0 - no limit
     _incoming_message_active: cython.bint
@@ -315,6 +303,7 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
         write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
         max_message_size: Optional[int] = 1024 * 1024,
+        max_frame_size: Optional[int] = 1024 * 1024,
         logger: LoggerLike = None,
     ):
         self.id = uuid.uuid4()
@@ -337,7 +326,8 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         self._recv_waiter = None
         self._recv_queue = deque()
         self._max_message_size = 0 if max_message_size is None else max_message_size
-        self._max_queue_high, self._max_queue_low = _normalize_watermarks(max_queue)
+        self._max_frame_size = 0 if max_frame_size is None else max_frame_size
+        self._max_queue_high, self._max_queue_low = normalize_watermarks(max_queue)
         self._incoming_message_active = False
         self._incoming_message_size = 0
 
@@ -405,8 +395,17 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         if frame.msg_type not in (WSMsgType.TEXT, WSMsgType.BINARY, WSMsgType.CONTINUATION):
             raise WSProtocolError(WSCloseCode.PROTOCOL_ERROR, "unsupported frame opcode")
 
+        if self._max_frame_size > 0 and frame.payload_size > self._max_frame_size:
+            raise WSProtocolError(
+                WSCloseCode.MESSAGE_TOO_BIG,
+                f"frame with {frame.payload_size} bytes exceeds limit of {self._max_frame_size} bytes",
+            )
+
         if self._permessage_deflate is None and frame.rsv1:
-            raise WSProtocolError(WSCloseCode.PROTOCOL_ERROR, "received compressed frame without negotiated permessage-deflate")
+            raise WSProtocolError(
+                WSCloseCode.PROTOCOL_ERROR,
+                "received compressed frame without negotiated permessage-deflate",
+            )
 
         if frame.msg_type == WSMsgType.CONTINUATION and not self._incoming_message_active:
             raise WSProtocolError(WSCloseCode.PROTOCOL_ERROR, "unexpected continuation frame")
@@ -1010,6 +1009,7 @@ class ClientConnection(ConnectionBase):
         max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
         write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
         max_message_size: Optional[int] = 1024 * 1024,
+        max_frame_size: Optional[int] = 1024 * 1024,
         logger: LoggerLike = None,
     ):
         super().__init__(
@@ -1023,6 +1023,7 @@ class ClientConnection(ConnectionBase):
             max_queue=max_queue,
             write_limit=write_limit,
             max_message_size=max_message_size,
+            max_frame_size=max_frame_size,
             logger=logger,
         )
 
@@ -1061,6 +1062,7 @@ class ServerConnection(ConnectionBase):
         max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
         write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
         max_message_size: Optional[int] = 1024 * 1024,
+        max_frame_size: Optional[int] = 1024 * 1024,
         logger: LoggerLike = None,
     ):
         super().__init__(
@@ -1074,6 +1076,7 @@ class ServerConnection(ConnectionBase):
             max_queue=max_queue,
             write_limit=write_limit,
             max_message_size=max_message_size,
+            max_frame_size=max_frame_size,
             logger=logger,
         )
         self.server = server

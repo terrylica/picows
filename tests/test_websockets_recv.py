@@ -250,6 +250,30 @@ async def test_fragmented_message_exceeding_max_size_closes_connection():
                 await ws.recv()
 
 
+async def test_tuple_max_size_applies_message_limit_to_client_wrapper():
+    async with WSServer(lambda _: FragmentedTextOnConnect()) as server:
+        async with websockets.connect(
+            server.url,
+            compression=None,
+            ping_interval=None,
+            max_size=(4, 10),
+        ) as ws:
+            with pytest.raises(websockets.ConnectionClosedError):
+                await ws.recv()
+
+
+async def test_tuple_max_size_applies_frame_limit_to_client_core():
+    async with WSServer(lambda _: SendLargeTextOnConnect()) as server:
+        async with websockets.connect(
+            server.url,
+            compression=None,
+            ping_interval=None,
+            max_size=(10, 2),
+        ) as ws:
+            with pytest.raises(websockets.ConnectionClosedError):
+                await ws.recv()
+
+
 async def test_disconnect_without_close_frame_sets_error_close_state():
     async with WSServer() as server:
         async with websockets.connect(server.url, compression=None, ping_interval=None) as ws:

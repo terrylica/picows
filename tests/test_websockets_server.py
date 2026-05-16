@@ -102,6 +102,60 @@ async def test_handler_exception_closes_connection_with_internal_error():
             assert ws.close_code == 1011
 
 
+async def test_tuple_max_size_applies_message_limit_to_server_wrapper():
+    closed_by_limit = asyncio.Event()
+
+    async def handler(ws: websockets.ServerConnection) -> None:
+        with pytest.raises(websockets.ConnectionClosedError):
+            await ws.recv()
+        closed_by_limit.set()
+
+    async with websockets.serve(
+        handler,
+        "127.0.0.1",
+        0,
+        compression=None,
+        max_size=(4, 10),
+    ) as server:
+        port = server.sockets[0].getsockname()[1]
+        async with websockets.connect(
+            f"ws://127.0.0.1:{port}/",
+            compression=None,
+            ping_interval=None,
+        ) as ws:
+            await ws.send([b"he", b"llo"])
+            with pytest.raises(websockets.ConnectionClosedError):
+                await ws.recv()
+            await asyncio.wait_for(closed_by_limit.wait(), 1)
+
+
+async def test_tuple_max_size_applies_frame_limit_to_server_core():
+    closed_by_limit = asyncio.Event()
+
+    async def handler(ws: websockets.ServerConnection) -> None:
+        with pytest.raises(websockets.ConnectionClosedError):
+            await ws.recv()
+        closed_by_limit.set()
+
+    async with websockets.serve(
+        handler,
+        "127.0.0.1",
+        0,
+        compression=None,
+        max_size=(10, 2),
+    ) as server:
+        port = server.sockets[0].getsockname()[1]
+        async with websockets.connect(
+            f"ws://127.0.0.1:{port}/",
+            compression=None,
+            ping_interval=None,
+        ) as ws:
+            await ws.send("large")
+            with pytest.raises(websockets.ConnectionClosedError):
+                await ws.recv()
+            await asyncio.wait_for(closed_by_limit.wait(), 1)
+
+
 async def test_server_close_closes_existing_connections():
     started = asyncio.Event()
 

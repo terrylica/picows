@@ -15,6 +15,7 @@ from .connection import (
     ClientConnection,
     process_exception,
 )
+from .limits import normalize_max_size
 from .negotiation import configure_permessage_deflate, resolve_subprotocol
 from ..compat import Request, Response
 from ..exceptions import (
@@ -26,7 +27,7 @@ from ..exceptions import (
     InvalidUpgrade,
     InvalidURI,
 )
-from ..typing import HeadersLike, LoggerLike, Origin, Subprotocol
+from ..typing import HeadersLike, LoggerLike, MaxSize, Origin, Subprotocol
 
 __all__ = [
     "ClientConnection",
@@ -77,7 +78,7 @@ class _Connect:
         ping_interval: Optional[float] = 20,
         ping_timeout: Optional[float] = 20,
         close_timeout: Optional[float] = 10,
-        max_size: Optional[int] = 1024 * 1024,
+        max_size: MaxSize = 1024 * 1024,
         max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
         write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
         logger: LoggerLike = None,
@@ -143,8 +144,8 @@ class _Connect:
         parsed = parse_url(self.uri)
         proxy = _process_proxy(self.proxy, parsed.is_secure)
         extra_headers = self._build_headers()
-        max_message_size = 0 if self.max_size is None else self.max_size
-        max_frame_size = 2 ** 31 - 1 if not self.max_size else self.max_size
+        max_message_size, max_frame_size = normalize_max_size(self.max_size)
+        connection_max_message_size = 0 if max_message_size is None else max_message_size
 
         if self.extensions is not None:
             raise NotImplementedError("custom extensions aren't supported by picows.websockets")
@@ -203,7 +204,8 @@ class _Connect:
                 close_timeout=self.close_timeout,
                 max_queue=self.max_queue,
                 write_limit=self.write_limit,
-                max_message_size=max_message_size,
+                max_message_size=connection_max_message_size,
+                max_frame_size=max_frame_size,
                 logger=self.logger,
             )
 
