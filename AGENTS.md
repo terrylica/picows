@@ -9,6 +9,13 @@ examples - Various examples for users on how to use picows + perf_test that coul
 
 ## Code style notes
 - Max line width is 120
+- The project supports Python 3.9. Do not use PEP 604 union syntax
+  like `A | B` in files that may be imported on Python 3.9 unless the file
+  has `from __future__ import annotations`.
+  Prefer `Optional[A]` / `Union[A, B]` for broad compatibility, especially in
+  tests and examples where annotations are evaluated at import time.
+  When changing type annotations, consider whether CI runs mypy or imports the
+  file on Python 3.9.
 - Do not write `del transport` or similar `del <parameter>` statements inside callbacks just to mark arguments as unused.
   Leave unused callback parameters as-is or rename them with a leading underscore if that is clearer.
   Using `del` in this situation is confusing and suggests reference-counting or lifetime management concerns.
