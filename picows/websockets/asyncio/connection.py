@@ -154,8 +154,7 @@ class _PerMessageDeflate:
 
         return self
 
-    @cython.cfunc
-    @cython.inline
+    @cython.ccall
     def decode_frame(self, frame: WSFrame, max_length: cython.Py_ssize_t) -> bytes:
         data: bytes
         data2: bytes
@@ -197,8 +196,7 @@ class _PerMessageDeflate:
 
         return data
 
-    @cython.cfunc
-    @cython.inline
+    @cython.ccall
     @cython.wraparound(True)
     def encode_frame(self, msg_type: WSMsgType, data: DataLike, fin: cython.bint) -> BytesLike:
         if msg_type != WSMsgType.CONTINUATION and (self.local_no_context_takeover or self._encoder is None):
@@ -230,8 +228,7 @@ def _coerce_close_code(code: CloseCode) -> Optional[int]:
 def _coerce_close_reason(reason: Optional[str]) -> Optional[str]:
     return reason if reason is not None else None
 
-@cython.cfunc
-@cython.inline
+@cython.ccall
 def _normalize_watermarks(
     max_queue: Union[int, tuple[Optional[int], Optional[int]], None],
 ) -> tuple[cython.Py_ssize_t, cython.Py_ssize_t]:
