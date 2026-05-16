@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import picows
 import pytest
@@ -120,7 +121,7 @@ async def test_select_subprotocol_receives_handshake_connection():
     def select_subprotocol(
         ws: websockets.ServerHandshakeConnection,
         offered: list[str],
-    ) -> str | None:
+    ) -> Optional[str]:
         seen["type"] = type(ws)
         seen["path"] = ws.request.path
         seen["state"] = ws.state

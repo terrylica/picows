@@ -1,5 +1,6 @@
 import asyncio
 import socket
+from typing import Optional
 
 import pytest
 from multidict import CIMultiDict
@@ -114,7 +115,7 @@ def test_process_exception_retries_transient_failures():
 async def test_connect_async_iterator_retries_then_succeeds():
     attempts = 0
 
-    def process_exception(exc: Exception) -> Exception | None:
+    def process_exception(exc: Exception) -> Optional[Exception]:
         nonlocal attempts
         attempts += 1
         if attempts == 1:

@@ -1,5 +1,6 @@
 import base64
 import re
+from typing import Optional
 
 import pytest
 from multidict import CIMultiDict
@@ -15,7 +16,7 @@ async def test_serve_process_request_can_reject_handshake():
     def process_request(
         ws: websockets.ServerHandshakeConnection,
         request: websockets.Request,
-    ) -> websockets.Response | None:
+    ) -> Optional[websockets.Response]:
         assert ws.request is request
         return websockets.Response(
             status_code=418,
@@ -70,7 +71,7 @@ async def test_serve_rejects_async_process_request():
     async def process_request(
         ws: websockets.ServerHandshakeConnection,
         request: websockets.Request,
-    ) -> websockets.Response | None:
+    ) -> Optional[websockets.Response]:
         return None
 
     async with websockets.serve(

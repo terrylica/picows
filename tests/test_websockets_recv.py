@@ -134,7 +134,7 @@ async def test_recv_streaming_cancellation_before_first_fragment_is_safe():
     async with WSServer(lambda _: FragmentedTextListener(allow_first_fragment, allow_second_fragment)) as server:
         async with websockets.connect(server.url, compression=None) as ws:
             iterator = ws.recv_streaming()
-            recv_task = asyncio.create_task(anext(iterator))
+            recv_task = asyncio.create_task(iterator.__anext__())
             recv_task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await recv_task
@@ -152,7 +152,7 @@ async def test_recv_streaming_partial_consumption_breaks_future_receives():
         async with websockets.connect(server.url, compression=None) as ws:
             iterator = ws.recv_streaming()
             allow_first_fragment.set()
-            assert await anext(iterator) == "he"
+            assert await iterator.__anext__() == "he"
 
             with pytest.raises(websockets.ConcurrencyError):
                 await ws.recv()
