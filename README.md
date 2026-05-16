@@ -31,7 +31,7 @@ With picows, you get unmatched, best-in-class latency and throughput!
 
 [![Benchmark chart](https://raw.githubusercontent.com/tarasko/websocket-benchmark/master/results/benchmark-Linux-256.png)](https://github.com/tarasko/websocket-benchmark/blob/master)
 
-The above chart shows the performance of various echo clients communicating with the same high-peformance C++ server through a loopback interface.
+The above chart shows the performance of various echo clients communicating with the same high-performance C++ server through a loopback interface.
 [boost.beast client](https://www.boost.org/library/latest/beast/) is also included for reference. You can find benchmark sources and more results [here](https://github.com/tarasko/websocket-benchmark).
 
 ## 💡 Key Features
@@ -56,14 +56,15 @@ pip install picows
 
 ## 🤔 Getting started
 
-picows provides 2 different sets of API:
+picows provides two APIs:
 
-* Re-implementation of the popular [websockets](https://websockets.readthedocs.io/en/stable/) 
-library asyncio interface. This is a drop-in replacement, you would only need to change imports in 
-order to transition from websockets to picows. 
+* A reimplementation of the popular [websockets](https://websockets.readthedocs.io/en/stable/)
+library's asyncio interface. This is a drop-in replacement; you only need to change imports
+to transition from websockets to picows.
 
-* Low-level core API. It is more efficient (lower latency, higher throughput, zero-copy)
-than high-level websockets API, but a few high-level (and not always required) features are missing.
+* A low-level core API. It is more efficient than the high-level websockets API
+(lower latency, higher throughput, zero-copy), but omits a few high-level features that
+aren't always required.
 
 ### websockets API
 
@@ -115,8 +116,9 @@ Since a message can span multiple frames, it is up to the user to decide the mos
 effective strategy for concatenating them. Each frame object includes additional low-level
 details about the current parser state, which may help to further optimize the behavior of the user's application.
 
-Core API doesn't offer high-level features like permessage-deflate extension support and async iter interface for reading. This features are 
-often not required in the real world, significantly slow down the data path and make impossible to do the actual zero-copy interface.
+The Core API doesn't offer high-level features like permessage-deflate extension support
+or an async iterator interface for reading. These features are often not required in real-world
+applications, significantly slow down the data path, and make a true zero-copy interface impossible.
 
 
 #### Client
@@ -144,7 +146,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### Server
+#### Server
 
 ```python
 import asyncio
