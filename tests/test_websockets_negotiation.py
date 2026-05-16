@@ -76,27 +76,6 @@ async def malformed_compressed_server():
         await server.wait_closed()
 
 
-class Frame:
-    def __init__(
-        self,
-        msg_type: picows.WSMsgType,
-        payload: bytes,
-        *,
-        fin: bool = True,
-        rsv1: bool = False,
-    ):
-        self.msg_type = msg_type
-        self.payload = payload
-        self.fin = fin
-        self.rsv1 = rsv1
-
-    def get_payload_as_bytes(self) -> bytes:
-        return self.payload
-
-    def get_payload_as_memoryview(self) -> memoryview:
-        return memoryview(self.payload)
-
-
 async def test_subprotocol_header_and_property():
     request_headers = {}
 
