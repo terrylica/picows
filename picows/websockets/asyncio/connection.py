@@ -297,14 +297,14 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         response: Response,
         subprotocol: Optional[Subprotocol],
         permessage_deflate: Optional[_PerMessageDeflate],
-        ping_interval: Optional[float] = 20,
-        ping_timeout: Optional[float] = 20,
-        close_timeout: Optional[float] = 10,
-        max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
-        write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
-        max_message_size: Optional[int] = 1024 * 1024,
-        max_frame_size: Optional[int] = 1024 * 1024,
-        logger: LoggerLike = None,
+        ping_interval: Optional[float],
+        ping_timeout: Optional[float],
+        close_timeout: Optional[float],
+        max_queue: Union[int, tuple[Optional[int], Optional[int]], None],
+        write_limit: Union[int, tuple[int, Optional[int]]],
+        max_message_size: Optional[int],
+        max_frame_size: Optional[int],
+        logger: LoggerLike,
     ):
         self.id = uuid.uuid4()
         self.logger = _resolve_logger(logger)
@@ -996,37 +996,6 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
 
 @cython.cclass
 class ClientConnection(ConnectionBase):
-    def __init__(
-        self,
-        *,
-        request: Request,
-        response: Response,
-        subprotocol: Optional[Subprotocol],
-        permessage_deflate: Optional[_PerMessageDeflate],
-        ping_interval: Optional[float] = 20,
-        ping_timeout: Optional[float] = 20,
-        close_timeout: Optional[float] = 10,
-        max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
-        write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
-        max_message_size: Optional[int] = 1024 * 1024,
-        max_frame_size: Optional[int] = 1024 * 1024,
-        logger: LoggerLike = None,
-    ):
-        super().__init__(
-            request=request,
-            response=response,
-            subprotocol=subprotocol,
-            permessage_deflate=permessage_deflate,
-            ping_interval=ping_interval,
-            ping_timeout=ping_timeout,
-            close_timeout=close_timeout,
-            max_queue=max_queue,
-            write_limit=write_limit,
-            max_message_size=max_message_size,
-            max_frame_size=max_frame_size,
-            logger=logger,
-        )
-
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
         self.transport = transport
@@ -1051,34 +1020,10 @@ class ServerConnection(ConnectionBase):
         self,
         server: Any,
         *,
-        request: Request,
-        response: Response,
-        subprotocol: Optional[Subprotocol],
-        permessage_deflate: Optional[_PerMessageDeflate],
         username: Optional[str] = None,
-        ping_interval: Optional[float] = 20,
-        ping_timeout: Optional[float] = 20,
-        close_timeout: Optional[float] = 10,
-        max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
-        write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
-        max_message_size: Optional[int] = 1024 * 1024,
-        max_frame_size: Optional[int] = 1024 * 1024,
-        logger: LoggerLike = None,
+        **kwargs: Any,
     ):
-        super().__init__(
-            request=request,
-            response=response,
-            subprotocol=subprotocol,
-            permessage_deflate=permessage_deflate,
-            ping_interval=ping_interval,
-            ping_timeout=ping_timeout,
-            close_timeout=close_timeout,
-            max_queue=max_queue,
-            write_limit=write_limit,
-            max_message_size=max_message_size,
-            max_frame_size=max_frame_size,
-            logger=logger,
-        )
+        super().__init__(**kwargs)
         self.server = server
         self._username = username
 

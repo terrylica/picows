@@ -66,43 +66,11 @@ class _Connect:
         self,
         uri: str,
         *,
-        origin: Optional[Origin] = None,
-        extensions: Optional[Sequence[Any]] = None,
-        subprotocols: Optional[Sequence[Subprotocol]] = None,
-        compression: Optional[str] = "deflate",
-        additional_headers: Optional[HeadersLike] = None,
-        user_agent_header: Optional[str] = _default_user_agent(),
-        proxy: Union[str, bool, None] = True,
-        process_exception: Callable[[Exception], Optional[Exception]] = process_exception,
-        open_timeout: Optional[float] = 10,
-        ping_interval: Optional[float] = 20,
-        ping_timeout: Optional[float] = 20,
-        close_timeout: Optional[float] = 10,
-        max_size: MaxSize = 1024 * 1024,
-        max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
-        write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
-        logger: LoggerLike = None,
+        options: dict[str, Any],
         **kwargs: Any,
     ):
         self.uri = uri
-        self.origin = origin
-        self.extensions = extensions
-        self.subprotocols = subprotocols
-        self.compression = compression
-        self.additional_headers = additional_headers
-        self.user_agent_header = user_agent_header
-        self.proxy = proxy
-        self.process_exception = process_exception
-        self.open_timeout = open_timeout
-        self.ping_interval = ping_interval
-        self.ping_timeout = ping_timeout
-        self.close_timeout = close_timeout
-        self.max_size = max_size
-        self.max_queue = max_queue
-        self.write_limit = write_limit
-        self.logger = logger
-        if "create_connection" in kwargs:
-            raise NotImplementedError("create_connection isn't supported by picows.websockets yet")
+        self.options = options
         self.kwargs = kwargs
         self._connection: Optional[ClientConnection] = None
         self._backoff = 1.0
@@ -130,7 +98,7 @@ class _Connect:
             try:
                 connection = await self._connect()
             except Exception as exc:
-                processed = self.process_exception(exc)
+                processed = self.options["process_exception"](exc)
                 if processed is not None:
                     raise processed
                 await asyncio.sleep(self._backoff)
@@ -142,14 +110,14 @@ class _Connect:
 
     async def _connect(self) -> ClientConnection:
         parsed = parse_url(self.uri)
-        proxy = _process_proxy(self.proxy, parsed.is_secure)
+        proxy = _process_proxy(self.options["proxy"], parsed.is_secure)
         extra_headers = self._build_headers()
-        max_message_size, max_frame_size = normalize_max_size(self.max_size)
+        max_message_size, max_frame_size = normalize_max_size(self.options["max_size"])
         connection_max_message_size = 0 if max_message_size is None else max_message_size
 
-        if self.extensions is not None:
+        if self.options["extensions"] is not None:
             raise NotImplementedError("custom extensions aren't supported by picows.websockets")
-        if self.compression not in (None, "deflate"):
+        if self.options["compression"] not in (None, "deflate"):
             raise NotImplementedError("only compression=None or 'deflate' are accepted")
 
         conn_kwargs = dict(self.kwargs)
@@ -192,30 +160,31 @@ class _Connect:
         ) -> ClientConnection:
             wrapped_request = Request.from_picows(request)
             wrapped_response = Response.from_picows(response)
-            subprotocol = resolve_subprotocol(self.subprotocols, wrapped_response)
-            permessage_deflate = configure_permessage_deflate(wrapped_response, self.compression)
+            subprotocol = resolve_subprotocol(self.options["subprotocols"], wrapped_response)
+            permessage_deflate = configure_permessage_deflate(wrapped_response, self.options["compression"])
             return ClientConnection(
                 request=wrapped_request,
                 response=wrapped_response,
                 subprotocol=subprotocol,
                 permessage_deflate=permessage_deflate,
-                ping_interval=self.ping_interval,
-                ping_timeout=self.ping_timeout,
-                close_timeout=self.close_timeout,
-                max_queue=self.max_queue,
-                write_limit=self.write_limit,
+                ping_interval=self.options["ping_interval"],
+                ping_timeout=self.options["ping_timeout"],
+                close_timeout=self.options["close_timeout"],
+                max_queue=self.options["max_queue"],
+                write_limit=self.options["write_limit"],
                 max_message_size=connection_max_message_size,
                 max_frame_size=max_frame_size,
-                logger=self.logger,
+                logger=self.options["logger"],
             )
 
         try:
-            logger_name: Any = self.logger if self.logger is not None else getLogger("websockets.client")
+            logger = self.options["logger"]
+            logger_name: Any = logger if logger is not None else getLogger("websockets.client")
             _transport, listener = await picows.ws_connect(
                 listener_factory,
                 self.uri,
                 ssl_context=self._coerce_ssl_context(ssl_context),
-                websocket_handshake_timeout=self.open_timeout,
+                websocket_handshake_timeout=self.options["open_timeout"],
                 enable_auto_ping=False,
                 enable_auto_pong=True,
                 max_frame_size=max_frame_size,
@@ -241,14 +210,14 @@ class _Connect:
         return listener
 
     def _build_headers(self) -> list[tuple[str, str]]:
-        headers = _header_items(self.additional_headers)
-        if self.origin is not None:
-            headers.append(("Origin", self.origin))
-        if self.user_agent_header is not None:
-            headers.append(("User-Agent", self.user_agent_header))
-        if self.subprotocols:
-            headers.append(("Sec-WebSocket-Protocol", ", ".join(self.subprotocols)))
-        if self.compression == "deflate":
+        headers = _header_items(self.options["additional_headers"])
+        if self.options["origin"] is not None:
+            headers.append(("Origin", self.options["origin"]))
+        if self.options["user_agent_header"] is not None:
+            headers.append(("User-Agent", self.options["user_agent_header"]))
+        if self.options["subprotocols"]:
+            headers.append(("Sec-WebSocket-Protocol", ", ".join(self.options["subprotocols"])))
+        if self.options["compression"] == "deflate":
             headers.append(("Sec-WebSocket-Extensions", _PERMESSAGE_DEFLATE_REQUEST))
         return headers
 
@@ -262,5 +231,33 @@ class _Connect:
         return value
 
 
-def connect(uri: str, **kwargs: Any) -> _Connect:
-    return _Connect(uri, **kwargs)
+def connect(
+    uri: str,
+    *,
+    origin: Optional[Origin] = None,
+    extensions: Optional[Sequence[Any]] = None,
+    subprotocols: Optional[Sequence[Subprotocol]] = None,
+    compression: Optional[str] = "deflate",
+    additional_headers: Optional[HeadersLike] = None,
+    user_agent_header: Optional[str] = _default_user_agent(),
+    proxy: Union[str, bool, None] = True,
+    process_exception: Callable[[Exception], Optional[Exception]] = process_exception,
+    open_timeout: Optional[float] = 10,
+    ping_interval: Optional[float] = 20,
+    ping_timeout: Optional[float] = 20,
+    close_timeout: Optional[float] = 10,
+    max_size: MaxSize = 1024 * 1024,
+    max_queue: Union[int, tuple[Optional[int], Optional[int]], None] = 16,
+    write_limit: Union[int, tuple[int, Optional[int]]] = 32768,
+    logger: LoggerLike = None,
+    create_connection: Any = None,
+    **kwargs: Any,
+) -> _Connect:
+    if create_connection is not None:
+        raise NotImplementedError("create_connection isn't supported by picows.websockets yet")
+    options = {
+        name: value
+        for name, value in locals().items()
+        if name not in ("uri", "kwargs", "create_connection")
+    }
+    return _Connect(uri, options=options, **kwargs)

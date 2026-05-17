@@ -31,6 +31,14 @@ async def test_client_connection_starts_in_connecting_state():
         response=websockets.Response(101, "Switching Protocols", CIMultiDict(), b""),
         subprotocol=None,
         permessage_deflate=None,
+        ping_interval=20,
+        ping_timeout=20,
+        close_timeout=10,
+        max_queue=16,
+        write_limit=32768,
+        max_message_size=1024 * 1024,
+        max_frame_size=1024 * 1024,
+        logger=None,
     )
 
     assert connection.state is websockets.State.CONNECTING
