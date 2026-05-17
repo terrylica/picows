@@ -41,7 +41,7 @@ The above chart shows the performance of various echo clients communicating with
 - Reuse memory as much as possible, avoid reallocations, and avoid unnecessary Python object creation
 - Use [aiofastnet](https://github.com/tarasko/aiofastnet) to achieve excellent TCP/TLS performance regardless of the event loop used
 - Lower-level core API with non-async data path, to reduce latency and achieve maximum performance
-- Provide a Cython `.pxd` for efficient integration of user Cythonized code with picows
+- Provide a Cython `.pxd` for efficient integration of user cythonized code with picows
 - Ability to check if a frame is the last one in the receiving buffer
 - Auto ping-pong with an option to customize ping/pong messages
 - Convenient method to measure websocket roundtrip time using ping/pong messages
@@ -59,14 +59,18 @@ pip install picows
 picows provides two APIs:
 
 * A reimplementation of the popular [websockets](https://websockets.readthedocs.io/en/stable/)
-library's asyncio interface. This is a drop-in replacement; you only need to change imports
-to transition from websockets to picows.
+library's asyncio interface. 
 
-* A low-level core API. It is more efficient than the high-level websockets API
-(lower latency, higher throughput, zero-copy), but omits a few high-level features that
-aren't always required.
+* A low-level and significantly more efficient (lower latency, better throughput, zero copy)
+core API.
 
 ### websockets API
+
+This is a drop-in replacement; you only need to change imports
+to transition from websockets to picows.
+
+Certain features from websockets library are not supported yet. Check out [documentation](https://picows.readthedocs.io/en/stable/websockets.html) 
+for the full list. 
 
 #### Client
 ```python
