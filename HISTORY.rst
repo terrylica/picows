@@ -18,6 +18,9 @@ If you're already using websockets, you only need to update
 your imports to get a decent performance boost.
 
 * Added picows.websockets subpackage
+* Expose WSFrame.payload_size property to pure python users
+* Fix: WSTransport.close_handshake wasn't properly filled in some edge cases
+* Fix: Apply max_frame_size to non-control frames only. Control frames payload size only checked against 127 bytes limit.
 
 
 1.20.0 (2026-05-08)
