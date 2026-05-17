@@ -343,7 +343,10 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
 
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
-        raise NotImplementedError
+        self.transport = transport
+        self._set_write_limits(self._write_limit)
+        if self._ping_interval is not None and self._keepalive_task is None:
+            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
 
     @cython.ccall
     def on_ws_disconnected(self, transport: WSTransport) -> None:
@@ -996,19 +999,7 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
 
 @cython.cclass
 class ClientConnection(ConnectionBase):
-    @cython.ccall
-    def on_ws_connected(self, transport: WSTransport) -> None:
-        self.transport = transport
-        self._set_write_limits(self._write_limit)
-        if self._ping_interval is not None and self._keepalive_task is None:
-            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
-
-
-def broadcast_message(connection: ConnectionBase, msg_type: WSMsgType, message: DataLike) -> bool:
-    if connection._send_in_progress:
-        return False
-    connection._encode_and_send(msg_type, message, True)
-    return True
+    pass
 
 
 @cython.cclass
@@ -1029,12 +1020,16 @@ class ServerConnection(ConnectionBase):
 
     @cython.ccall
     def on_ws_connected(self, transport: WSTransport) -> None:
-        self.transport = transport
-        self._set_write_limits(self._write_limit)
-        if self._ping_interval is not None and self._keepalive_task is None:
-            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+        ConnectionBase.on_ws_connected(self, transport)
         self.server.loop.call_soon(self.server.start_connection_handler, self)
 
     @property
     def username(self) -> Optional[str]:
         return self._username
+
+
+def broadcast_message(connection: ConnectionBase, msg_type: WSMsgType, message: DataLike) -> bool:
+    if connection._send_in_progress:
+        return False
+    connection._encode_and_send(msg_type, message, True)
+    return True
