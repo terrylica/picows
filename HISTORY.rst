@@ -8,13 +8,17 @@ picows Release History
 2.0.0 ()
 --------
 
-The major version increase is done because of the new picows.websockets subpackage,
-which is a 2x faster drop-in replacement for the popular **websockets** library.
-Check out the benchmark! If you're already using websockets, you only need to update
-your imports to get a decent performance boost!
-
 This release does NOT introduce any breaking changes to existing code that is using picows.
 You can update safely.
+
+The major version increase is done because of the new picows.websockets subpackage,
+which is a 2x faster drop-in replacement for the popular **websockets** library.
+Check out the benchmark!
+If you're already using websockets, you only need to update
+your imports to get a decent performance boost.
+
+* Added picows.websockets subpackage
+
 
 1.20.0 (2026-05-08)
 ------------------

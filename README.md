@@ -222,9 +222,17 @@ pytest -s -v -k test_client_handshake_timeout[uvloop-plain] --log-cli-level 9
 
 5. Run perf, see call graph
 
+For Intel:
+
 ```bash
 $ perf record -F 999 -g --call-graph lbr --user-callchains -- python -m examples.perf_test --msg-size 8192 --ssl
-$ perf report -G -n --stdio
+$ DEBUGINFOD_URLS= perf report -G -n --stdio
+```
+
+For AMD:
+```bash
+$ perf record -F 999 -g --call-graph dwarf --user-callchains -- python -m examples.perf_test --msg-size 8192 --ssl
+$ DEBUGINFOD_URLS= perf report -G -n --stdio
 ```
 
 6. Build coverage report:
