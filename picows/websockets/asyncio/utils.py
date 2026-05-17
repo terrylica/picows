@@ -1,6 +1,17 @@
 from __future__ import annotations
 
+import sys
+
+from picows.version import __version__
+
 from ..typing import MaxQueue, MaxSize
+
+
+def default_user_agent() -> str:
+    return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/{__version__}"
+
+
+default_server_header = default_user_agent
 
 
 def normalize_max_size(max_size: MaxSize) -> tuple[int | None, int]:

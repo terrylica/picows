@@ -9,7 +9,7 @@ import picows
 from picows import websockets
 from picows.websockets.asyncio.client import _process_proxy
 from picows.websockets.asyncio.connection import _resolve_logger, process_exception
-from picows.websockets.asyncio.limits import normalize_watermarks
+from picows.websockets.asyncio.utils import normalize_watermarks
 from tests.utils import ServerEchoListener, WSServer
 
 

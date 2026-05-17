@@ -21,7 +21,7 @@ else:
 
 from picows import WSProtocolError
 
-from .limits import normalize_watermarks
+from .utils import normalize_watermarks
 from ..compat import State, CloseCode, Request, Response
 from ..exceptions import (
     ConcurrencyError,

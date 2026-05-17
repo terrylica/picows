@@ -21,8 +21,8 @@ from .connection import (
     _resolve_logger,
     broadcast_message,
 )
-from .limits import normalize_max_size
 from .negotiation import configure_permessage_deflate
+from .utils import default_server_header, normalize_max_size
 from ..compat import Request, Response, State
 from ..exceptions import ConcurrencyError, InvalidHandshake, InvalidOrigin
 from ..typing import DataLike, LoggerLike, MaxSize, Origin, Subprotocol
@@ -43,10 +43,6 @@ __all__ = [
 
 
 _PERMESSAGE_DEFLATE_REQUEST = "permessage-deflate"
-
-
-def _default_server_header() -> str:
-    return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/0"
 
 
 def _supports_permessage_deflate(request: Request) -> bool:
@@ -354,7 +350,7 @@ class serve:
         subprotocols: Sequence[Subprotocol] | None = None,
         select_subprotocol: Callable[[ServerHandshakeConnection, Sequence[Subprotocol]], Subprotocol | None] | None = None,
         compression: str | None = "deflate",
-        server_header: str | None = _default_server_header(),
+        server_header: str | None = default_server_header(),
         open_timeout: float | None = 10,
         ping_interval: float | None = 20,
         ping_timeout: float | None = 20,

@@ -31,6 +31,8 @@ from .api import (
     ws_create_server,
 )
 
+from .version import __version__
+
 __all__ = [
     'WSError',
     'WSHandshakeError',
@@ -55,5 +57,4 @@ __all__ = [
     'ws_create_server',
 ]
 
-__version__ = "1.20.0"
 __author__ = "Taras Kozlov"

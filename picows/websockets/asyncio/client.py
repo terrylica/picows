@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import socket
-import sys
 from collections.abc import Generator
 from logging import getLogger
 from ssl import SSLContext
@@ -15,8 +14,8 @@ from .connection import (
     ClientConnection,
     process_exception,
 )
-from .limits import normalize_max_size
 from .negotiation import configure_permessage_deflate, resolve_subprotocol
+from .utils import default_user_agent, normalize_max_size
 from ..compat import Request, Response
 from ..exceptions import (
     InvalidHandshake,
@@ -36,10 +35,6 @@ __all__ = [
 
 
 _PERMESSAGE_DEFLATE_REQUEST = "permessage-deflate; client_max_window_bits"
-
-
-def _default_user_agent() -> str:
-    return f"Python/{sys.version_info.major}.{sys.version_info.minor} picows-websockets/0"
 
 
 def _header_items(headers: Any) -> list[tuple[str, str]]:
@@ -239,7 +234,7 @@ def connect(
     subprotocols: Optional[Sequence[Subprotocol]] = None,
     compression: Optional[str] = "deflate",
     additional_headers: Optional[HeadersLike] = None,
-    user_agent_header: Optional[str] = _default_user_agent(),
+    user_agent_header: Optional[str] = default_user_agent(),
     proxy: Union[str, bool, None] = True,
     process_exception: Callable[[Exception], Optional[Exception]] = process_exception,
     open_timeout: Optional[float] = 10,
