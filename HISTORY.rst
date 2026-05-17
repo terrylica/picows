@@ -5,6 +5,23 @@ picows Release History
    :depth: 1
    :local:
 
+2.0.0 (2026-05-18)
+-----------------
+
+This release does NOT introduce any breaking changes to existing code that is using picows.
+You can update safely.
+
+The major version increase is done because of the new picows.websockets subpackage,
+which is a 2x faster drop-in replacement for the popular **websockets** library.
+Check out the benchmark!
+If you're already using websockets, you only need to update
+your imports to get a decent performance boost.
+
+* Added picows.websockets subpackage
+* Expose WSFrame.payload_size property to pure python users
+* Fix: WSTransport.close_handshake wasn't properly filled in some edge cases
+* Fix: Apply max_frame_size to non-control frames only. Control frames payload size only checked against 127 bytes limit.
+
 1.20.0 (2026-05-08)
 ------------------
 

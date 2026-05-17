@@ -1,4 +1,4 @@
-from .types import (
+from .common import (
     WSError,
     WSHandshakeError,
     WSInvalidMessageError,
@@ -55,5 +55,4 @@ __all__ = [
     'ws_create_server',
 ]
 
-__version__ = "1.20.0"
-__author__ = "Taras Kozlov"
+from .version import __author__, __version__

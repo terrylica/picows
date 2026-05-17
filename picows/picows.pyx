@@ -22,11 +22,11 @@ from cpython.pythread cimport PyThread_get_thread_ident
 from libc.string cimport memmove, memcpy
 from libc.stdlib cimport rand
 
-from .types import (PICOWS_DEBUG_LL, WSUpgradeRequest, WSUpgradeResponse,
-                    WSUpgradeResponseWithListener,
-                    WSHandshakeError, WSInvalidMessageError, WSInvalidStatusError,
-                    WSInvalidHeaderError, WSInvalidUpgradeError,
-                    WSProtocolError, add_extra_headers)
+from .common import (PICOWS_DEBUG_LL, WSUpgradeRequest, WSUpgradeResponse,
+                     WSUpgradeResponseWithListener,
+                     WSHandshakeError, WSInvalidMessageError, WSInvalidStatusError,
+                     WSInvalidHeaderError, WSInvalidUpgradeError,
+                     WSProtocolError, add_extra_headers)
 
 
 cdef:
@@ -47,7 +47,7 @@ class _NotImplemented(Exception):
     pass
 
 
-# "unlikely" works only gcc, but still nice to have
+# "unlikely" works only for gcc, but still nice to have
 # https://github.com/cython/cython/issues/7667
 cdef extern from *:
     cdef bint unlikely(bint val) noexcept
@@ -236,6 +236,21 @@ cdef class WSFrame:
                 f"rsv3={True if self.rsv3 else False}, "
                 f"last_in_buffer={True if self.last_in_buffer else False}, "
                 f"payload_sz={self.payload_size}, tail_sz={self.tail_size})")
+
+
+cpdef WSFrame _make_test_ws_frame(WSMsgType msg_type, bytes payload, bint fin, bint rsv1):
+    cdef WSFrame self = <WSFrame>WSFrame.__new__(WSFrame)
+    self._payload_obj = payload
+    self.payload_ptr = PyBytes_AS_STRING(payload)
+    self.payload_size = len(payload)
+    self.tail_size = 0
+    self.msg_type = msg_type
+    self.fin = fin
+    self.rsv1 = rsv1
+    self.rsv2 = False
+    self.rsv3 = False
+    self.last_in_buffer = True
+    return self
 
 
 cdef class MemoryBuffer:
@@ -668,6 +683,8 @@ cdef class WSTransport:
 
             if self.close_handshake is None:
                 self.close_handshake = <WSCloseHandshake>WSCloseHandshake.__new__(WSCloseHandshake)
+                self.close_handshake.recv = None
+                self.close_handshake.sent = None
                 self.close_handshake.recv_then_sent = False
 
             self.close_handshake.sent = <WSCloseInfo>WSCloseInfo.__new__(WSCloseInfo)
@@ -1648,7 +1665,8 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
                 self._f_payload_start_pos = self._f_curr_state_start_pos
                 self._state = WSParserState.READ_PAYLOAD
 
-            if self._f_payload_length > self._max_frame_size:
+            if (self._f_payload_length > self._max_frame_size and
+                    self._f_msg_type not in (WSMsgType.PING, WSMsgType.PONG, WSMsgType.CLOSE)):
                 raise WSProtocolError(
                     WSCloseCode.MESSAGE_TOO_BIG,
                     f"Received frame with payload size exceeding max allowed size, "
@@ -1677,6 +1695,7 @@ cdef class WSProtocol(WSProtocolBase, asyncio.BufferedProtocol):
                               )
 
             frame = <WSFrame>WSFrame.__new__(WSFrame)
+            frame._payload_obj = None
             frame.payload_ptr = self._read_buffer.data + self._f_payload_start_pos
             frame.payload_size = self._f_payload_length
             frame.tail_size = self._f_new_data_start_pos - (self._f_curr_state_start_pos + self._f_payload_length)

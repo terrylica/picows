@@ -66,8 +66,9 @@ cdef class MemoryBuffer:
 
 cdef class WSFrame:
     cdef:
+        bytes _payload_obj # Used only for testing as data storage instead of actual read buffer
         char* payload_ptr
-        Py_ssize_t payload_size
+        readonly Py_ssize_t payload_size
         readonly Py_ssize_t tail_size
         readonly WSMsgType msg_type
         readonly uint8_t fin
@@ -84,6 +85,9 @@ cdef class WSFrame:
     cpdef WSCloseCode get_close_code(self)
     cpdef bytes get_close_message(self)
     cpdef str get_close_reason(self)
+
+
+cpdef WSFrame _make_test_ws_frame(WSMsgType msg_type, bytes payload, bint fin, bint rsv1)
 
 
 cdef class WSTransport:

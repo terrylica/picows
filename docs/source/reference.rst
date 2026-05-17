@@ -1,7 +1,7 @@
 .. py:currentmodule:: picows
 
-API reference
-====================
+Core API reference
+==================
 
 .. automodule:: picows
 
@@ -145,8 +145,6 @@ Classes
 
     .. py:attribute:: payload_size
         :type: size_t
-
-        **Available only from Cython.**
 
         Size of the payload.
 

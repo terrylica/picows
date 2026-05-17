@@ -10,8 +10,8 @@ from typing import Callable, Optional, Union, Dict, Any, Awaitable, cast, TYPE_C
 
 from python_socks.async_.asyncio import Proxy
 
-from .types import (WSHeadersLike, WSUpgradeRequest, WSUpgradeResponse, WSHost, WSPort,
-                    WSUpgradeResponseWithListener, WSHandshakeError)
+from .common import (WSHeadersLike, WSUpgradeRequest, WSUpgradeResponse, WSHost, WSPort,
+                     WSUpgradeResponseWithListener, WSHandshakeError)
 from .picows import (WSListener, WSTransport, WSAutoPingStrategy,   # type: ignore [attr-defined]
                      WSProtocol)
 from .url import parse_url, WSInvalidURL, WSParsedURL

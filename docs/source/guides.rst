@@ -1,5 +1,5 @@
-Topic guides
-===============
+Core API topic guides
+=====================
 
 Making data interface async
 ---------------------------

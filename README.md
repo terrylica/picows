@@ -31,15 +31,17 @@ With picows, you get unmatched, best-in-class latency and throughput!
 
 [![Benchmark chart](https://raw.githubusercontent.com/tarasko/websocket-benchmark/master/results/benchmark-Linux-256.png)](https://github.com/tarasko/websocket-benchmark/blob/master)
 
-The above chart shows the performance of various echo clients communicating with the same high-peformance C++ server through a loopback interface.
+The above chart shows the performance of various echo clients communicating with the same high-performance C++ server through a loopback interface.
 [boost.beast client](https://www.boost.org/library/latest/beast/) is also included for reference. You can find benchmark sources and more results [here](https://github.com/tarasko/websocket-benchmark).
 
 ## 💡 Key Features
 
+- Faster (up to 2x) drop-in replacement for the popular [websockets](https://websockets.readthedocs.io/en/stable/) library. 
 - Maximally efficient WebSocket frame parser and builder implemented in C/Cython
 - Reuse memory as much as possible, avoid reallocations, and avoid unnecessary Python object creation
 - Use [aiofastnet](https://github.com/tarasko/aiofastnet) to achieve excellent TCP/TLS performance regardless of the event loop used
-- Provide a Cython `.pxd` for efficient integration of user Cythonized code with picows
+- Lower-level core API with non-async data path, to reduce latency and achieve maximum performance
+- Provide a Cython `.pxd` for efficient integration of user cythonized code with picows
 - Ability to check if a frame is the last one in the receiving buffer
 - Auto ping-pong with an option to customize ping/pong messages
 - Convenient method to measure websocket roundtrip time using ping/pong messages
@@ -54,10 +56,76 @@ pip install picows
 
 ## 🤔 Getting started
 
-### Echo client
+picows provides two APIs:
 
-Connects to an echo server, sends a message, and disconnects after receiving a reply.
+* A reimplementation of the popular [websockets](https://websockets.readthedocs.io/en/stable/)
+library's asyncio interface. 
 
+* A low-level and significantly more efficient (lower latency, better throughput, zero copy)
+core API.
+
+### websockets API
+
+This is a drop-in replacement; you only need to change imports
+to transition from websockets to picows.
+
+Certain features from websockets library are not supported yet. Check out [documentation](https://picows.readthedocs.io/en/stable/websockets.html) 
+for the full list. 
+
+#### Client
+```python
+# Import picows.websockets instead of websockets
+from picows.websockets.asyncio.client import connect
+import asyncio
+
+
+async def hello():
+    async with connect("ws://localhost:8765") as websocket:
+        await websocket.send("Hello world!")
+        message = await websocket.recv()
+        print(message)
+
+
+if __name__ == "__main__":
+    asyncio.run(hello())
+```
+
+#### Server
+```python
+# Import picows.websockets instead of websockets
+from picows.websockets.asyncio.server import serve
+import asyncio
+
+
+async def echo(websocket):
+    async for message in websocket:
+        await websocket.send(message)
+
+
+async def main():
+    async with serve(echo, "localhost", 8765) as server:
+        await server.serve_forever()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+### Core API
+
+The Core API achieves superior performance by offering an efficient, non-async data path, similar to the
+[transport/protocol design from asyncio](https://docs.python.org/3/library/asyncio-protocol.html#asyncio-transports-protocols).
+
+The user handler receives WebSocket frame objects instead of complete messages.
+Since a message can span multiple frames, it is up to the user to decide the most
+effective strategy for concatenating them. Each frame object includes additional low-level
+details about the current parser state, which may help to further optimize the behavior of the user's application.
+
+The Core API doesn't offer high-level features like permessage-deflate extension support
+or an async iterator interface for reading. These features are often not required in real-world
+applications, significantly slow down the data path, and make a true zero-copy interface impossible.
+
+
+#### Client
 ```python
 import asyncio
 from picows import ws_connect, WSFrame, WSTransport, WSListener, WSMsgType, WSCloseCode
@@ -82,18 +150,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-This prints:
-
-```text
-Echo reply: Hello world
-```
-
-`ws_connect()` accepts either a zero-argument client listener factory such as
-`ClientListener`, or a two-argument factory receiving
-`(request: WSUpgradeRequest, response: WSUpgradeResponse)` when the caller
-needs access to the negotiated handshake metadata before `on_ws_connected()`.
-
-### Echo server
+#### Server
 
 ```python
 import asyncio
@@ -127,22 +184,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
-
-## :construction_worker: API Design
-
-The library achieves superior performance by offering an efficient, non-async data path, similar to the
-[transport/protocol design from asyncio](https://docs.python.org/3/library/asyncio-protocol.html#asyncio-transports-protocols).
-
-The user handler receives WebSocket frame objects instead of complete messages.
-Since a message can span multiple frames, it is up to the user to decide the most
-effective strategy for concatenating them. Each frame object includes additional low-level
-details about the current parser state, which may help to further optimize the behavior of the user's application.
-
-picows doesn't offer high-level features like permessage-deflate extension support and async iter interface for reading. This features are 
-often not required in the real world, significantly slow down the data path and make impossible to do the actual zero-copy interface.
-
-High-level features like these can be easily implemented on top of picows API in the most suitable way. 
-Check out [topic guides](https://picows.readthedocs.io/en/stable/guides.html) and [examples](https://github.com/tarasko/picows/tree/master/examples) for the most common usage patterns.
 
 ## :hammer: Contributing / Building From Source
 
@@ -181,9 +222,17 @@ pytest -s -v -k test_client_handshake_timeout[uvloop-plain] --log-cli-level 9
 
 5. Run perf, see call graph
 
+For Intel:
+
 ```bash
 $ perf record -F 999 -g --call-graph lbr --user-callchains -- python -m examples.perf_test --msg-size 8192 --ssl
-$ perf report -G -n --stdio
+$ DEBUGINFOD_URLS= perf report -G -n --stdio
+```
+
+For AMD:
+```bash
+$ perf record -F 999 -g --call-graph dwarf --user-callchains -- python -m examples.perf_test --msg-size 8192 --ssl
+$ DEBUGINFOD_URLS= perf report -G -n --stdio
 ```
 
 6. Build coverage report:
