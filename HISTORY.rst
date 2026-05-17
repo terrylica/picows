@@ -5,8 +5,8 @@ picows Release History
    :depth: 1
    :local:
 
-2.0.0 ()
---------
+2.0.0 (2026-05-18)
+-----------------
 
 This release does NOT introduce any breaking changes to existing code that is using picows.
 You can update safely.
@@ -21,7 +21,6 @@ your imports to get a decent performance boost.
 * Expose WSFrame.payload_size property to pure python users
 * Fix: WSTransport.close_handshake wasn't properly filled in some edge cases
 * Fix: Apply max_frame_size to non-control frames only. Control frames payload size only checked against 127 bytes limit.
-
 
 1.20.0 (2026-05-08)
 ------------------
