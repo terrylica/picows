@@ -8,8 +8,8 @@ from multidict import CIMultiDict
 import picows
 from picows import websockets
 from picows.websockets.asyncio.client import _process_proxy
-from picows.websockets.asyncio.connection import _resolve_logger, process_exception
-from picows.websockets.asyncio.utils import normalize_watermarks
+from picows.websockets.asyncio.connection import process_exception
+from picows.websockets.asyncio.utils import normalize_watermarks, resolve_logger
 from tests.utils import ServerEchoListener, WSServer
 
 
@@ -22,7 +22,8 @@ def test_client_private_option_helpers():
     assert normalize_watermarks(None) == (0, 0)
     assert normalize_watermarks((None, 1)) == (0, 0)
     assert normalize_watermarks((8, None)) == (8, 2)
-    assert _resolve_logger("picows.test").name == "picows.test"
+    assert resolve_logger("picows.test", "websockets.client").name == "picows.test"
+    assert resolve_logger(None, "websockets.client").name == "websockets.client"
 
 
 async def test_client_connection_starts_in_connecting_state():

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import socket
 from collections.abc import Generator
-from logging import getLogger
 from ssl import SSLContext
 from typing import Any, Callable, Optional, Sequence, Union
 
@@ -15,7 +14,7 @@ from .connection import (
     process_exception,
 )
 from .negotiation import configure_permessage_deflate, resolve_subprotocol
-from .utils import default_user_agent, normalize_max_size
+from .utils import default_user_agent, normalize_max_size, resolve_logger
 from ..compat import Request, Response
 from ..exceptions import (
     InvalidHandshake,
@@ -157,6 +156,7 @@ class _Connect:
             wrapped_response = Response.from_picows(response)
             subprotocol = resolve_subprotocol(self.options["subprotocols"], wrapped_response)
             permessage_deflate = configure_permessage_deflate(wrapped_response, self.options["compression"])
+            logger = resolve_logger(self.options["logger"], "websockets.client")
             return ClientConnection(
                 request=wrapped_request,
                 response=wrapped_response,
@@ -169,12 +169,11 @@ class _Connect:
                 write_limit=self.options["write_limit"],
                 max_message_size=connection_max_message_size,
                 max_frame_size=max_frame_size,
-                logger=self.options["logger"],
+                logger=logger,
             )
 
         try:
-            logger = self.options["logger"]
-            logger_name: Any = logger if logger is not None else getLogger("websockets.client")
+            logger_name: Any = resolve_logger(self.options["logger"], "websockets.client")
             _transport, listener = await picows.ws_connect(
                 listener_factory,
                 self.uri,

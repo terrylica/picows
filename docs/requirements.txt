@@ -1,4 +1,4 @@
-Cython>=3.0
+Cython>=3.2
 sphinx-toolbox
 Sphinx<9
 sphinx-autodoc-typehints<3.9

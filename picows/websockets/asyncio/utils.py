@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sys
+from logging import getLogger
 
 from picows.version import __version__
 
-from ..typing import MaxQueue, MaxSize
+from ..typing import LoggerLike, LoggerProtocol, MaxQueue, MaxSize
 
 
 def default_user_agent() -> str:
@@ -33,3 +34,11 @@ def normalize_watermarks(max_queue: MaxQueue) -> tuple[int, int]:
             return 0, 0
         return high, high // 4 if low is None else low
     return max_queue, max_queue // 4
+
+
+def resolve_logger(logger: LoggerLike, default_name: str) -> LoggerProtocol:
+    if logger is None:
+        return getLogger(default_name)
+    if isinstance(logger, str):
+        return getLogger(logger)
+    return logger

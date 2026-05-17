@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import uuid
 import zlib
@@ -31,7 +30,7 @@ from ..exceptions import (
     InvalidHandshake,
     InvalidStatus,
 )
-from ..typing import BytesLike, Data, DataLike, LoggerLike, LoggerProtocol, Subprotocol
+from ..typing import BytesLike, Data, DataLike, LoggerProtocol, Subprotocol
 
 
 # cached for performance
@@ -230,15 +229,6 @@ def _coerce_close_reason(reason: Optional[str]) -> Optional[str]:
 
 
 @cython.ccall
-def _resolve_logger(logger: LoggerLike) -> LoggerProtocol:
-    if logger is None:
-        return logging.getLogger("websockets.client")
-    if isinstance(logger, str):
-        return logging.getLogger(logger)
-    return logger
-
-
-@cython.ccall
 def process_exception(exc: Exception) -> Optional[Exception]:
     if isinstance(exc, (EOFError, OSError, asyncio.TimeoutError)):
         return None
@@ -304,10 +294,10 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         write_limit: Union[int, tuple[int, Optional[int]]],
         max_message_size: Optional[int],
         max_frame_size: Optional[int],
-        logger: LoggerLike,
+        logger: LoggerProtocol,
     ):
         self.id = uuid.uuid4()
-        self.logger = _resolve_logger(logger)
+        self.logger = logger
         self.transport = cython.cast(WSTransport, None)
         self._request = request
         self._response = response

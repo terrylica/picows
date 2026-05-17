@@ -11,21 +11,20 @@ from dataclasses import dataclass
 from collections.abc import Awaitable, Callable, Iterable
 from inspect import isawaitable
 from logging import getLogger
-from typing import Any, Optional, Pattern, Sequence
+from typing import Any, Optional, Pattern, Sequence, cast
 
 import picows
 from multidict import CIMultiDict
 
 from .connection import (
     ServerConnection,
-    _resolve_logger,
     broadcast_message,
 )
 from .negotiation import configure_permessage_deflate
-from .utils import default_server_header, normalize_max_size
+from .utils import default_server_header, normalize_max_size, resolve_logger
 from ..compat import Request, Response, State
 from ..exceptions import ConcurrencyError, InvalidHandshake, InvalidOrigin
-from ..typing import DataLike, LoggerLike, MaxSize, Origin, Subprotocol
+from ..typing import DataLike, LoggerLike, LoggerProtocol, MaxSize, Origin, Subprotocol
 
 if sys.version_info >= (3, 11):
     from builtins import ExceptionGroup
@@ -238,11 +237,11 @@ class Server:
         self,
         handler: Callable[[ServerConnection], Awaitable[None]],
         *,
-        logger: LoggerLike | None = None,
+        logger: LoggerProtocol,
     ) -> None:
         self.loop = asyncio.get_running_loop()
         self.handler = handler
-        self.logger = _resolve_logger(logger if logger is not None else getLogger("websockets.server"))
+        self.logger = logger
         self.handlers: dict[ServerConnection, asyncio.Task[None]] = {}
         self.close_task: asyncio.Task[None] | None = None
         self.closed_waiter: asyncio.Future[None] = self.loop.create_future()
@@ -404,9 +403,11 @@ class serve:
         if self.compression not in (None, "deflate"):
             raise NotImplementedError("only compression=None or 'deflate' are accepted")
 
+        logger = resolve_logger(self.logger, "websockets.server")
+
         server = Server(
             self.handler,
-            logger=self.logger,
+            logger=logger,
         )
 
         max_message_size, max_frame_size = normalize_max_size(self.max_size)
@@ -482,13 +483,12 @@ class serve:
                     write_limit=self.write_limit,
                     max_message_size=max_message_size,
                     max_frame_size=max_frame_size,
-                    logger=self.logger,
+                    logger=logger,
                 )
                 return picows.WSUpgradeResponseWithListener(response.to_picows(), connection)
             else:
                 return picows.WSUpgradeResponseWithListener(response.to_picows(), None)
 
-        logger_name: Any = self.logger if self.logger is not None else getLogger("websockets.server")
         raw_server = await picows.ws_create_server(
             listener_factory,
             self.host,
@@ -497,7 +497,7 @@ class serve:
             enable_auto_ping=False,
             enable_auto_pong=True,
             max_frame_size=max_frame_size,
-            logger_name=logger_name,
+            logger_name=cast(Any, logger),
             **self.kwargs,
         )
         server.wrap(raw_server)
