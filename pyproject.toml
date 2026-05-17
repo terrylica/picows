@@ -41,7 +41,7 @@ include = ["picows*"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
-version = {attr = "picows.__version__"}
+version = {attr = "picows.version.__version__"}
 
 [project.optional-dependencies]
 aiofastnet = []
