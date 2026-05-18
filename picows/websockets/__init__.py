@@ -45,9 +45,17 @@ from .typing import (
     Subprotocol,
 )
 
+# This is for compatibility with legacy API
+# Some projects refer WebSocketClientProtocol type
+WebSocketClientProtocol = ClientConnection
+
+# Some project import State directly from protocol
+from . import protocol
+
 __all__ = [
     "BytesLike",
     "ClientConnection",
+    "WebSocketClientProtocol",
     "CloseCode",
     "Data",
     "DataLike",
@@ -95,6 +103,7 @@ __all__ = [
     "connect",
     "exceptions",
     "process_exception",
+    "protocol",
     "route",
     "serve",
 ]
