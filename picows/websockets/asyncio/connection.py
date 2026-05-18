@@ -10,7 +10,6 @@ from collections.abc import AsyncIterable, Iterable
 from time import monotonic
 from typing import Any, AsyncIterator, Awaitable, Optional, \
     Union, Dict, Tuple, Iterator, Mapping, NoReturn
-from warnings import deprecated
 
 import cython
 
@@ -989,12 +988,12 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         return None
 
     @property
-    def open(self):
+    def open(self) -> bool:
         warnings.warn("Use state == State.OPEN instead", DeprecationWarning)
-        return self._is_in_open_state()
+        return self._is_in_open_state() # type: ignore[no-any-return]
 
     @property
-    def closed(self):
+    def closed(self) -> bool:
         warnings.warn("Use state == State.CLOSED instead", DeprecationWarning)
         return self.transport is not None and self.transport.is_disconnected
 
