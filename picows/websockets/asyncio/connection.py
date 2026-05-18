@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+import warnings
 import zlib
 from collections import deque
 from collections.abc import AsyncIterable, Iterable
@@ -985,6 +986,16 @@ class ConnectionBase(WSListener):  # type: ignore[misc]
         if handshake.sent is not None:
             return _coerce_close_reason(handshake.sent.reason)  # type: ignore[no-any-return]
         return None
+
+    @property
+    def open(self) -> bool:
+        warnings.warn("Use state == State.OPEN instead", DeprecationWarning)
+        return self._is_in_open_state() # type: ignore[no-any-return]
+
+    @property
+    def closed(self) -> bool:
+        warnings.warn("Use state == State.CLOSED instead", DeprecationWarning)
+        return self.transport is not None and self.transport.is_disconnected
 
 
 @cython.cclass

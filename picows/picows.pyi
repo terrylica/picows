@@ -104,6 +104,9 @@ class WSTransport:
     @property
     def is_close_frame_sent(self) -> bool: ...
 
+    @property
+    def is_disconnected(self) -> bool: ...
+
     def send(
         self,
         msg_type: WSMsgType,

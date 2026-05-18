@@ -43,6 +43,8 @@ async def test_client_connection_starts_in_connecting_state():
     )
 
     assert connection.state is websockets.State.CONNECTING
+    assert connection.open is False
+    assert connection.closed is False
 
 
 async def test_connect_await_style_and_socket_options():
@@ -50,6 +52,7 @@ async def test_connect_await_style_and_socket_options():
         ws = await websockets.connect(server.url, compression=None, ping_interval=None)
         try:
             assert ws.state is websockets.State.OPEN
+            assert ws.open is True
             assert ws.local_address[0] == "127.0.0.1"
             assert ws.remote_address[0] == "127.0.0.1"
             assert ws.latency == 0
@@ -156,6 +159,8 @@ async def test_connection_context_manager_and_close_timeout_none():
             await ws.send("context")
             assert await ws.recv() == "context"
         assert ws.state is websockets.State.CLOSED
+        assert ws.open is False
+        assert ws.closed is True
 
 
 class IgnoreCloseListener(ServerEchoListener):
