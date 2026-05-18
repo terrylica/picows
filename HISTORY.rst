@@ -5,7 +5,8 @@ picows Release History
    :depth: 1
    :local:
 
-2.1.0 ()
+2.1.0 (2026-05-18)
+-----------------
 
 * Websockets: add open, closed attributes to ConnectionBase for compatibility with legacy API.
 * Websockets: add protocol module with State enum for compatibility
