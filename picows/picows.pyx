@@ -718,13 +718,22 @@ cdef class WSTransport:
 
         Exception behavior:
 
-        * client side: if disconnect was initiated because user callback raised,
-          the original exception is transferred here and re-raised by this
-          coroutine when awaited.
-        * client side: websocket/protocol failures may also be re-raised here
-          (for example :any:`WSProtocolError`).
-        * server side: always completes normally (no per-client exception
-          propagation via this coroutine).
+        * If a user :any:`WSListener.on_ws_*` callback raises and this causes
+          picows to disconnect, the original exception is transferred here and
+          re-raised by this coroutine when awaited. In this case picows sends a
+          CLOSE frame with :any:`WSCloseCode.INTERNAL_ERROR` and disconnects.
+        * User code may raise :any:`WSProtocolError` from an
+          :any:`WSListener.on_ws_*` callback to choose the CLOSE frame code and
+          reason.
+        * Protocol violations detected by picows may also be re-raised here.
+        * Peer-initiated disconnects do not cause this coroutine to raise by
+          themselves, even if the peer sends a non-OK CLOSE code or drops the
+          connection without sending a CLOSE frame.
+
+        In general, this coroutine raises when picows detected a local failure
+        that caused the disconnect. Remote-side shutdown conditions are exposed
+        through connection state such as :any:`close_handshake`, not by raising
+        from this coroutine.
 
         This coroutine internally shields the wait future, so cancelling the
         waiter does not cancel internal disconnect bookkeeping.
